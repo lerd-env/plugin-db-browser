@@ -47,6 +47,7 @@ function mysql(sql) {
     return '';
   }
   if (/version\(\)/.test(sql)) return tsv([['version()'], ['8.4.0']]);
+  if (/FROM places/.test(sql)) return tsv([['name'], ['México - Cancún']]);
   if (/SELECT DATABASE\(\)/.test(sql)) return tsv([['DATABASE()'], [noDB ? 'NULL' : db]]);
   if (/information_schema\.TABLES/.test(sql)) {
     if (noDB) return '';
@@ -88,12 +89,18 @@ function mysql(sql) {
 }
 
 const answer = service === 'postgres' ? postgres : mysql;
+// The mysql client in lerd's containers talks latin1 until a session says
+// SET NAMES utf8mb4, so accented text comes out as bytes that are not UTF-8.
+const latin1 = service !== 'postgres' && !/^SET NAMES utf8mb4;/.test(input);
+const write = process.stdout.write.bind(process.stdout);
+process.stdout.write = (text) => write(latin1 ? Buffer.from(text, 'latin1') : text);
 const marker = input.match(/SELECT '([Bb][0-9a-f]+)' AS \1;/)?.[1];
+const statementsIn = input.replace(/^SET NAMES utf8mb4;\n/, '');
 if (!marker) {
-  process.stdout.write(answer(input));
+  process.stdout.write(answer(statementsIn));
 } else {
   // psql's setup lines, which start with a backslash, come before the first statement.
-  const body = input.split('\n').filter((l) => !l.startsWith('\\')).join('\n');
+  const body = statementsIn.split('\n').filter((l) => !l.startsWith('\\')).join('\n');
   const sqls = body.split(new RegExp(`\\n;\\nSELECT '${marker}' AS ${marker};\\n?`)).filter((s) => s.trim());
   // PostgreSQL folds an unquoted alias to lower case, as the real one does.
   const header = service === 'postgres' ? marker.toLowerCase() : marker;

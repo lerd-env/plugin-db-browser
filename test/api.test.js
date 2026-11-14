@@ -268,3 +268,14 @@ test('each service\'s engine is asked of lerd once, then remembered', async () =
   assert.equal(hits['/api/databases'], 1);
   assert.equal(hits['/api/sites'], 3);
 });
+
+test('accented text reads back as it is stored, and every MySQL session says it speaks UTF-8', async () => {
+  const { json } = await call({ action: 'query', sql: 'SELECT name FROM places' });
+  assert.deepStrictEqual(json.rows, [['México - Cancún']]);
+  await call({ action: 'rows', table: 'users' });
+  await call({ action: 'query', sql: "UPDATE users SET name = 'Cancún'", confirm: true });
+  await call({ action: 'apply', table: 'users', changes: [{ type: 'update', key: { id: '1' }, set: { name: 'Cancún' } }], confirm: true });
+  const sessions = logged().split(/^db:shell.*$/m).slice(1).map((s) => s.trimStart());
+  assert.ok(sessions.length >= 5);
+  for (const s of sessions) assert.match(s, /^SET NAMES utf8mb4;/);
+});
