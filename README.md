@@ -37,6 +37,10 @@ The full instructions are on the plugin's **Documentation** tab in the dashboard
 
 ![A table's structure: its columns, indexes and foreign keys](docs/structure.png)
 
+## What it adds to Lerd
+
+A **Database** tab on each site, and one API endpoint, `db`, that the tab calls and that answers only the dashboard on this machine. No commands, hooks, MCP tools, notifications, services or frameworks.
+
 ## What it does
 
 - Opens MySQL, MariaDB and PostgreSQL through `lerd db:shell`, which knows the site's service and credentials, and SQLite through PHP in the site's container, so the machine needs no database client.
