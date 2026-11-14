@@ -32,7 +32,8 @@
     .grid th { cursor: pointer; user-select: none; white-space: nowrap; }
     .grid td { cursor: pointer; }
     .structure { flex: 1; min-width: 0; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 16px; }
-    .query { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    /* min-height 0 lets the result scroll, keeping the cell panel on screen. */
+    .query { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
     .query textarea { margin: 12px 12px 0; resize: vertical; min-height: 80px; }
     .qbar { gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--lerd-line); }
     .qbar #qmeta { flex: 1; min-width: 0; }

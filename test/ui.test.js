@@ -59,7 +59,8 @@ window.lerd = {
       if (/;\\s*\\S/.test(req.sql)) throw new Error('run one statement at a time\\n\\nexit status 1');
       if (/^UPDATE/i.test(req.sql) && !req.confirm) return JSON.stringify({ connection: current, confirm: 'This statement can change shop. Run it?', sql: req.sql });
       if (/^UPDATE/i.test(req.sql)) return JSON.stringify({ connection: current, read: false, affected: 2, columns: [], rows: [], ms: 5, truncated: false, cap: 1000 });
-      return JSON.stringify({ connection: current, read: true, columns: ['id', 'name'], rows: [['1', 'ana'], ['2', null]], ms: 12, truncated: !!window.truncated, cap: 1000 });
+      const rows = window.manyRows ? Array.from({ length: 200 }, (_, i) => [String(i + 1), 'row ' + (i + 1)]) : [['1', 'ana'], ['2', null]];
+      return JSON.stringify({ connection: current, read: true, columns: ['id', 'name'], rows, ms: 12, truncated: !!window.truncated, cap: 1000 });
     }
     throw new Error('unknown action ' + req.action);
   },
@@ -577,4 +578,22 @@ test('Copy rows copies the page as CSV, JSON or SQL INSERT, and Copy row one row
   await page.locator('#grid tbody tr').nth(1).locator('td').first().click();
   await page.locator('#cell-copyrow').click();
   assert.deepStrictEqual(JSON.parse(await page.evaluate(() => window.copied)), { id: '2', note: '<img src=x onerror="window.pwned=1">', meta: '{"a":1,"b":[2,3]}' });
+});
+
+test('a cell of a long query result opens in a panel that stays on screen', async () => {
+  const { page } = await open(() => (window.manyRows = true));
+  await openQuery(page);
+  await page.locator('#sql').fill('SELECT id, name FROM users');
+  await page.locator('#run').click();
+  await page.locator('#qresult table').waitFor();
+  await page.locator('#qresult tbody tr').first().locator('td').nth(1).click();
+  assert.equal(await page.locator('#cell').isVisible(), true);
+  assert.equal(await text(page, '#cell-name'), 'name');
+  assert.equal(await text(page, '#cell-value'), 'row 1');
+  assert.equal(await page.locator('#cell-edit').isVisible(), false);
+  const result = await page.locator('#qresult').boundingBox();
+  const panel = await page.locator('#cell').boundingBox();
+  const viewport = page.viewportSize();
+  assert.ok(panel.y >= result.y + result.height - 1, 'the panel opens under the result');
+  assert.ok(panel.y + panel.height <= viewport.height + 1, `the panel ends inside the frame (${Math.round(panel.y + panel.height)} > ${viewport.height})`);
 });
