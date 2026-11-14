@@ -20,9 +20,11 @@ const SITES = [
 const SERVICES = [{ service: 'mysql', family: 'mysql' }, { service: 'mariadb-app', family: 'mariadb' }, { service: 'postgres', family: 'postgres' }];
 
 let server, url;
+let hits = {};
 test.before(async () => {
   server = http.createServer((req, res) => {
     if (req.headers['x-lerd-plugin-token'] !== TOKEN) return res.writeHead(401).end('no token');
+    hits[req.url] = (hits[req.url] ?? 0) + 1;
     const body = { '/api/sites': SITES, '/api/databases': SERVICES }[req.url];
     if (!body) return res.writeHead(404).end();
     res.setHeader('Content-Type', 'application/json');
@@ -249,4 +251,20 @@ test('views and bad edits are refused before anything runs', async () => {
   assert.match((await call({ action: 'apply', table: 'users', changes: [{ type: 'update', key: { id: '1' }, set: { ghost: 'x' } }], confirm: true })).error, /no column ghost in users/);
   assert.match((await call({ action: 'apply', table: 'nope', changes: edits, confirm: true })).error, /no table nope/);
   assert.doesNotMatch(logged(), /START TRANSACTION/);
+});
+
+const sessions = () => logged().split('\n').filter((l) => /^db:shell/.test(l)).length;
+
+test('a page of rows takes two database sessions, whatever it asks for', async () => {
+  await call({ action: 'rows', table: 'users', sort: { column: 'name', dir: 'asc' }, filter: { column: 'name', op: 'contains', value: 'a' } });
+  assert.equal(sessions(), 2);
+});
+
+test('each service\'s engine is asked of lerd once, then remembered', async () => {
+  hits = {};
+  await call({ action: 'tables' });
+  await call({ action: 'rows', table: 'users' });
+  await call({ action: 'tables', service: 'postgres', database: 'blog' });
+  assert.equal(hits['/api/databases'], 1);
+  assert.equal(hits['/api/sites'], 3);
 });

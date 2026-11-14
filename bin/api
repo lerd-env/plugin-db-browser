@@ -12,10 +12,10 @@
 // {action: "apply", table, schema, changes, confirm?} applies staged edits in
 // one transaction, answering {confirm, statements} until confirmed.
 const fs = require('node:fs');
-const { withEngine, databaseName, tables, page, structure, query, columns, applyAll } = require('../lib/db');
+const { withEngine, databaseName, tables, openTable, page, structure, query, applyAll } = require('../lib/db');
 const { OPERATORS, buildChanges } = require('../lib/sql');
 const { connectionsFor, pickConnection } = require('../lib/connections');
-const { PAGE_SIZES, readSettings, savePageSize, saveConnection } = require('../lib/settings');
+const { PAGE_SIZES, readSettings, savePageSize, saveConnection, saveFamilies } = require('../lib/settings');
 const { api } = require('../lib/lerd');
 const { singleStatement, isRead, capRows } = require('../lib/statement');
 const { readHistory, addHistory } = require('../lib/history');
@@ -29,15 +29,26 @@ function readBody() {
   return text ? JSON.parse(text) : {};
 }
 
+// The engine of each service the site uses, from the remembered answers when
+// they cover them all, and from lerd otherwise.
+async function serviceFamilies(site) {
+  const known = readSettings(DATA).families;
+  const wanted = (site.databases ?? []).map((d) => d.service);
+  if (wanted.every((name) => known[name])) return wanted.map((service) => ({ service, family: known[service] }));
+  const all = await api('/api/databases');
+  saveFamilies(DATA, Object.fromEntries(all.map((s) => [s.service, s.family])));
+  return all;
+}
+
 // The connection a request may use: one of the site's own, checked against
 // what lerd lists rather than what the request says.
 async function connect(body) {
   const siteName = process.env.LERD_SITE;
   const sitePath = process.env.LERD_SITE_PATH;
   if (!siteName || !sitePath) throw new Error('pick a site: ?site=<name>');
-  const [sites, services] = await Promise.all([api('/api/sites'), api('/api/databases')]);
-  const site = sites.find((s) => s.name === siteName);
+  const site = (await api('/api/sites')).find((s) => s.name === siteName);
   if (!site) throw new Error(`lerd lists no site ${siteName}`);
+  const services = await serviceFamilies(site);
   const list = connectionsFor(site, services);
   const requested = body.service ? { service: String(body.service), database: String(body.database ?? '') } : null;
   const { conn, notice } = pickConnection(list, requested, readSettings(DATA).connections[siteName]);
@@ -60,9 +71,9 @@ function runQuery(conn, connection, sql, confirmed) {
   return { engine: conn.engine, connection, read, ms, truncated, cap: CAP, ...result };
 }
 
-function applyChanges(conn, connection, table, changes, confirmed) {
+function applyChanges(conn, connection, table, columns, changes, confirmed) {
   if (table.view) throw new Error(`${table.name} is a view, so its rows cannot be edited here`);
-  const statements = buildChanges({ engine: conn.engine, table, columns: columns(conn, table), changes });
+  const statements = buildChanges({ engine: conn.engine, table, columns, changes });
   if (!confirmed) {
     const n = statements.length;
     return { connection, confirm: `Apply ${n} ${n === 1 ? 'change' : 'changes'} to ${table.name}?`, statements };
@@ -89,13 +100,12 @@ async function main() {
     };
   }
   if (body.action === 'query') return runQuery(conn, connection, String(body.sql ?? ''), body.confirm === true);
-  const table = tables(conn).find((t) => t.name === body.table && t.schema === (body.schema || ''));
-  if (!table) throw new Error(`no table ${body.table} in this database`);
-  if (body.action === 'apply') return applyChanges(conn, connection, table, body.changes, body.confirm === true);
-  if (body.action === 'structure') return { engine: conn.engine, connection, ...structure(conn, table) };
+  const { table, columns } = openTable(conn, String(body.table ?? ''), String(body.schema ?? ''));
+  if (body.action === 'apply') return applyChanges(conn, connection, table, columns, body.changes, body.confirm === true);
+  if (body.action === 'structure') return { engine: conn.engine, connection, ...structure(conn, table, columns) };
   const limit = readSettings(DATA).pageSize;
   const offset = Math.max(0, Number.parseInt(body.offset, 10) || 0);
-  return { engine: conn.engine, connection, offset, limit, ...page(conn, table, { limit, offset, sort: body.sort, filter: body.filter }) };
+  return { engine: conn.engine, connection, offset, limit, ...page(conn, table, columns, { limit, offset, sort: body.sort, filter: body.filter }) };
 }
 
 main().then(

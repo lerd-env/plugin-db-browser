@@ -4,79 +4,98 @@
 // default and mysql/shop hold users, mariadb-app/legacy holds orders,
 // postgres/blog holds posts. FAKE_NO_DB=1 is a server with no database picked.
 // FAKE_LOG names a file each call's arguments and SQL are appended to.
+// A session of several statements, each followed by SELECT '<marker>' AS
+// <marker>, is answered statement by statement with the marker rows between.
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 const flag = (name) => (args.find((a) => a.startsWith(`--${name}=`)) || '').split('=').slice(1).join('=');
 const service = flag('service');
 const database = flag('database');
-const sql = fs.readFileSync(0, 'utf8');
-if (process.env.FAKE_LOG) fs.appendFileSync(process.env.FAKE_LOG, args.join(' ') + '\n' + sql + '\n');
+const input = fs.readFileSync(0, 'utf8');
+if (process.env.FAKE_LOG) fs.appendFileSync(process.env.FAKE_LOG, args.join(' ') + '\n' + input + '\n');
 
 function fail(msg) {
   process.stderr.write(msg + '\n');
   process.exit(1);
 }
 
-if (service === 'postgres') {
+const tsv = (lines) => lines.map((l) => l.join('\t')).join('\n') + '\n';
+const csv = (lines) => lines.map((l) => l.join(',')).join('\n') + '\n';
+
+function postgres(sql) {
   if (database !== 'blog') fail(`FATAL:  database "${database}" does not exist`);
-  const csv = (lines) => process.stdout.write(lines.map((l) => l.join(',')).join('\n') + '\n');
-  if (/version\(\)/.test(sql)) csv([['version'], ['PostgreSQL 16.4']]);
-  else if (/information_schema\.tables/.test(sql)) csv([['table_schema', 'table_name', 'table_type'], ['public', 'posts', 'BASE TABLE']]);
-  else if (/information_schema\.columns c/.test(sql)) csv([['column_name', 'data_type', 'is_nullable', 'column_default', '?column?'], ['id', 'integer', 'NO', '', 't'], ['title', 'text', 'YES', '', 'f']]);
-  else if (/pg_indexes/.test(sql)) csv([['indexname', 'indexdef'], ['posts_pkey', 'CREATE UNIQUE INDEX posts_pkey ON public.posts USING btree (id)']]);
-  else if (/pg_constraint/.test(sql)) csv([['conname', 'pg_get_constraintdef'], ['posts_user_fk', 'FOREIGN KEY (user_id) REFERENCES users(id)']]);
-  else if (/^UPDATE posts/m.test(sql)) process.stdout.write(/QUIET off/.test(sql) ? 'UPDATE 1\n' : '');
-  else if (/COUNT\(\*\) FROM "public"\."posts"/.test(sql)) csv([['count'], ['1']]);
-  else if (/FROM "public"\."posts" ORDER BY "id" ASC LIMIT/.test(sql)) csv([['id', 'title'], ['1', 'Hello']]);
-  else fail('ERROR:  fake-lerd does not know this query');
-  process.exit(0);
+  if (/version\(\)/.test(sql)) return csv([['version'], ['PostgreSQL 16.4']]);
+  if (/information_schema\.tables/.test(sql)) return csv([['table_schema', 'table_name', 'table_type'], ['public', 'posts', 'BASE TABLE']]);
+  if (/information_schema\.columns c/.test(sql)) return csv([['column_name', 'data_type', 'is_nullable', 'column_default', '?column?'], ['id', 'integer', 'NO', '', 't'], ['title', 'text', 'YES', '', 'f']]);
+  if (/pg_indexes/.test(sql)) return csv([['indexname', 'indexdef'], ['posts_pkey', 'CREATE UNIQUE INDEX posts_pkey ON public.posts USING btree (id)']]);
+  if (/pg_constraint/.test(sql)) return csv([['conname', 'pg_get_constraintdef'], ['posts_user_fk', 'FOREIGN KEY (user_id) REFERENCES users(id)']]);
+  if (/^UPDATE posts/m.test(sql)) return /QUIET off/.test(input) ? 'UPDATE 1\n' : '';
+  if (/COUNT\(\*\) FROM "public"\."posts"/.test(sql)) return csv([['count'], ['1']]);
+  if (/FROM "public"\."posts" ORDER BY "id" ASC LIMIT/.test(sql)) return csv([['id', 'title'], ['1', 'Hello']]);
+  fail('ERROR:  fake-lerd does not know this query');
 }
 
-const out = (lines) => process.stdout.write(lines.map((l) => l.join('\t')).join('\n') + '\n');
 const noDB = process.env.FAKE_NO_DB === '1';
 const users = [['1', 'ana'], ['2', 'NULL'], ['3', 'tab\\there']];
 const db = service === 'mariadb-app' ? 'legacy' : 'shop';
-if (service && database !== db) fail(`ERROR 1049 (42000): Unknown database '${database}'`);
 
-if (/^START TRANSACTION;/.test(sql)) {
-  // A batch of edits: a value of FAIL_ME stands for a statement the server rejects.
-  if (/FAIL_ME/.test(sql)) fail("ERROR 1062 (23000) at line 2: Duplicate entry 'FAIL_ME' for key 'PRIMARY'");
-  process.exit(0);
-}
-if (/version\(\)/.test(sql)) out([['version()'], ['8.4.0']]);
-else if (/SELECT DATABASE\(\)/.test(sql)) out([['DATABASE()'], [noDB ? 'NULL' : db]]);
-else if (/information_schema\.TABLES/.test(sql)) {
-  if (noDB) process.exit(0);
-  if (db === 'legacy') out([['TABLE_NAME', 'TABLE_TYPE'], ['orders', 'BASE TABLE']]);
-  else out([['TABLE_NAME', 'TABLE_TYPE'], ['users', 'BASE TABLE'], ['active_users', 'VIEW']]);
-} else if (/FROM numbers/.test(sql)) {
-  // A table of 5000 numbers, for the row cap on typed queries.
-  const limit = Number(sql.match(/LIMIT (\d+)/)?.[1] ?? 5000);
-  out([['n'], ...Array.from({ length: Math.min(limit, 5000) }, (_, i) => [String(i + 1)])]);
-} else if (/^UPDATE users/m.test(sql)) {
-  if (/SELECT ROW_COUNT\(\)/.test(sql)) out([['ROW_COUNT()'], ['2']]);
-} else if (/information_schema\.COLUMNS/.test(sql)) {
-  out([['COLUMN_NAME', 'COLUMN_TYPE', 'IS_NULLABLE', 'COLUMN_DEFAULT', 'COLUMN_KEY'], ['id', 'int', 'NO', 'NULL', 'PRI'], ['name', 'varchar(40)', 'YES', 'NULL', '']]);
-} else if (/information_schema\.STATISTICS/.test(sql)) out([['INDEX_NAME', 'NON_UNIQUE', 'cols'], ['PRIMARY', '0', 'id']]);
-else if (/information_schema\.KEY_COLUMN_USAGE/.test(sql)) process.exit(0);
-else if (/FROM `users`/.test(sql)) {
-  // Just enough SQL for the plugin's own pages: one = or LIKE filter on name,
-  // an order on one column, and LIMIT/OFFSET.
-  let rows = users.slice();
-  const where = sql.match(/WHERE `name` (=|LIKE) '(.*?)'/);
-  if (where) {
-    const re = new RegExp('^' + where[2].replace(/%/g, '.*') + '$');
-    rows = rows.filter((r) => r[1] !== 'NULL' && re.test(r[1]));
+function mysql(sql) {
+  if (service && database !== db) fail(`ERROR 1049 (42000): Unknown database '${database}'`);
+  if (/^START TRANSACTION;/.test(sql)) {
+    // A batch of edits: a value of FAIL_ME stands for a statement the server rejects.
+    if (/FAIL_ME/.test(sql)) fail("ERROR 1062 (23000) at line 2: Duplicate entry 'FAIL_ME' for key 'PRIMARY'");
+    return '';
   }
-  const order = sql.match(/ORDER BY `(\w+)` (ASC|DESC)/);
-  if (order) {
-    const i = order[1] === 'id' ? 0 : 1;
-    rows.sort((a, b) => a[i].localeCompare(b[i]) * (order[2] === 'DESC' ? -1 : 1));
+  if (/version\(\)/.test(sql)) return tsv([['version()'], ['8.4.0']]);
+  if (/SELECT DATABASE\(\)/.test(sql)) return tsv([['DATABASE()'], [noDB ? 'NULL' : db]]);
+  if (/information_schema\.TABLES/.test(sql)) {
+    if (noDB) return '';
+    if (db === 'legacy') return tsv([['TABLE_NAME', 'TABLE_TYPE'], ['orders', 'BASE TABLE']]);
+    return tsv([['TABLE_NAME', 'TABLE_TYPE'], ['users', 'BASE TABLE'], ['active_users', 'VIEW']]);
   }
-  if (/COUNT\(\*\)/.test(sql)) out([['COUNT(*)'], [String(rows.length)]]);
-  else {
+  if (/FROM numbers/.test(sql)) {
+    // A table of 5000 numbers, for the row cap on typed queries.
+    const limit = Number(sql.match(/LIMIT (\d+)/)?.[1] ?? 5000);
+    return tsv([['n'], ...Array.from({ length: Math.min(limit, 5000) }, (_, i) => [String(i + 1)])]);
+  }
+  if (/^UPDATE users/m.test(sql)) return /SELECT ROW_COUNT\(\)/.test(sql) ? tsv([['ROW_COUNT()'], ['2']]) : '';
+  if (/information_schema\.COLUMNS/.test(sql)) {
+    if (!/TABLE_NAME = '(users|active_users)'/.test(sql)) return '';
+    return tsv([['COLUMN_NAME', 'COLUMN_TYPE', 'IS_NULLABLE', 'COLUMN_DEFAULT', 'COLUMN_KEY'], ['id', 'int', 'NO', 'NULL', 'PRI'], ['name', 'varchar(40)', 'YES', 'NULL', '']]);
+  }
+  if (/information_schema\.STATISTICS/.test(sql)) return tsv([['INDEX_NAME', 'NON_UNIQUE', 'cols'], ['PRIMARY', '0', 'id']]);
+  if (/information_schema\.KEY_COLUMN_USAGE/.test(sql)) return '';
+  if (/FROM `users`/.test(sql)) {
+    // Just enough SQL for the plugin's own pages: one = or LIKE filter on name,
+    // an order on one column, and LIMIT/OFFSET.
+    let rows = users.slice();
+    const where = sql.match(/WHERE `name` (=|LIKE) '(.*?)'/);
+    if (where) {
+      const re = new RegExp('^' + where[2].replace(/%/g, '.*') + '$');
+      rows = rows.filter((r) => r[1] !== 'NULL' && re.test(r[1]));
+    }
+    const order = sql.match(/ORDER BY `(\w+)` (ASC|DESC)/);
+    if (order) {
+      const i = order[1] === 'id' ? 0 : 1;
+      rows.sort((a, b) => a[i].localeCompare(b[i]) * (order[2] === 'DESC' ? -1 : 1));
+    }
+    if (/COUNT\(\*\)/.test(sql)) return tsv([['COUNT(*)'], [String(rows.length)]]);
     const [, limit, offset] = sql.match(/LIMIT (\d+) OFFSET (\d+)/).map(Number);
     rows = rows.slice(offset, offset + limit);
-    if (rows.length) out([['id', 'name'], ...rows]);
+    return rows.length ? tsv([['id', 'name'], ...rows]) : '';
   }
-} else fail('ERROR 1064 (42000): fake-lerd does not know this query');
+  fail('ERROR 1064 (42000): fake-lerd does not know this query');
+}
+
+const answer = service === 'postgres' ? postgres : mysql;
+const marker = input.match(/SELECT '([Bb][0-9a-f]+)' AS \1;/)?.[1];
+if (!marker) {
+  process.stdout.write(answer(input));
+} else {
+  // psql's setup lines, which start with a backslash, come before the first statement.
+  const body = input.split('\n').filter((l) => !l.startsWith('\\')).join('\n');
+  const sqls = body.split(new RegExp(`\\n;\\nSELECT '${marker}' AS ${marker};\\n?`)).filter((s) => s.trim());
+  // PostgreSQL folds an unquoted alias to lower case, as the real one does.
+  const header = service === 'postgres' ? marker.toLowerCase() : marker;
+  process.stdout.write(sqls.map((sql) => answer(sql) + `${header}\n${marker}\n`).join(''));
+}

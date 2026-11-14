@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { parseMysql, parseCsv, quoteIdent, sqliteFile, parseEnv, splitCommandTag, splitRowCount } = require('../lib/parse');
+const { parseMysql, parseCsv, quoteIdent, sqliteFile, parseEnv, splitCommandTag, splitRowCount, splitBatch } = require('../lib/parse');
 
 test('parseMysql reads the header and unescapes batch values', () => {
   const out = 'a\tb\tc\n1\tNULL\tx\\ty\\nz\\\\w\n';
@@ -50,4 +50,11 @@ test('splitRowCount takes the ROW_COUNT() the plugin appended off the end of mys
   assert.deepStrictEqual(splitRowCount('ROW_COUNT()\n3\n'), { body: '', affected: 3 });
   assert.deepStrictEqual(splitRowCount('id\tn\n1\tx\nROW_COUNT()\n1\n'), { body: 'id\tn\n1\tx\n', affected: 1 });
   assert.deepStrictEqual(splitRowCount('ROW_COUNT()\n-1\n'), { body: '', affected: null });
+});
+
+test('splitBatch cuts one session\'s output at the marker rows, empty results included', () => {
+  const M = 'b0123abcd';
+  const out = `a\tb\n1\t2\n${M}\n${M}\n${M}\n${M}\nc\n3\n${M}\n${M}\n`;
+  assert.deepStrictEqual(splitBatch(out, M, 3), ['a\tb\n1\t2\n', '', 'c\n3\n']);
+  assert.throws(() => splitBatch(`a\n1\n${M}\n${M}\n`, M, 2), /expected 2 results from the database, got 1/);
 });
