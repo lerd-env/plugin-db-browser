@@ -1,0 +1,10 @@
+{
+  "name": "lerd-db-browser",
+  "private": true,
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "playwright": "1.61.1"
+  }
+}

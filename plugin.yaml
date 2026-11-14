@@ -1,0 +1,17 @@
+api_version: 1
+name: db-browser
+lerd: ">=1.38"
+version: 0.1.0
+description: Browse a site's database on its own tab, MySQL, MariaDB, PostgreSQL or SQLite
+docs: DOCS.md
+icon: icon.svg
+
+api:
+  - path: db
+    methods: [POST]
+    run: bin/api
+    loopback_only: true
+    timeout: 2m
+
+ui:
+  site_tab: {title: Database, entry: ui/site.html, when: database}

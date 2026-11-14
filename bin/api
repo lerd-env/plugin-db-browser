@@ -1,0 +1,44 @@
+#!/usr/bin/env node
+// POST /api/plugins/db-browser/db?site=<site>
+// {action: "tables"} lists the tables, {action: "rows", table, schema, offset}
+// answers one page of one of them, {action: "page_size", size} remembers how
+// many rows a page shows.
+const { engineOf, tables, page } = require('../lib/db');
+const { PAGE_SIZES, readSettings, savePageSize } = require('../lib/settings');
+
+const DATA = process.env.LERD_PLUGIN_DATA;
+
+function readBody() {
+  const text = require('node:fs').readFileSync(0, 'utf8');
+  return text ? JSON.parse(text) : {};
+}
+
+function main() {
+  const body = readBody();
+  if (body.action === 'page_size') {
+    savePageSize(DATA, Number(body.size));
+    return readSettings(DATA);
+  }
+  const sitePath = process.env.LERD_SITE_PATH;
+  if (!sitePath) throw new Error('pick a site: ?site=<name>');
+  const engine = engineOf(sitePath);
+  switch (body.action) {
+    case 'tables':
+      return { engine, tables: tables(sitePath, engine), pageSize: readSettings(DATA).pageSize, pageSizes: PAGE_SIZES };
+    case 'rows': {
+      const table = tables(sitePath, engine).find((t) => t.name === body.table && t.schema === (body.schema || ''));
+      if (!table) throw new Error(`no table ${body.table} in this database`);
+      const limit = readSettings(DATA).pageSize;
+      const offset = Math.max(0, Number.parseInt(body.offset, 10) || 0);
+      return { engine, offset, limit, ...page(sitePath, engine, table, { limit, offset }) };
+    }
+  }
+  throw new Error(`unknown action ${body.action}`);
+}
+
+try {
+  process.stdout.write(JSON.stringify(main()));
+} catch (e) {
+  console.error(e.message);
+  process.exit(1);
+}

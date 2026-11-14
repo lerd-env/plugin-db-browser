@@ -1,0 +1,19 @@
+#!/usr/bin/env node
+// Stands in for `lerd db:shell` on a MySQL server, printing what the mysql
+// client prints in batch mode. FAKE_NO_DB=1 is a server with no database picked.
+const sql = require('node:fs').readFileSync(0, 'utf8');
+const out = (lines) => process.stdout.write(lines.map((l) => l.join('\t')).join('\n') + '\n');
+const noDB = process.env.FAKE_NO_DB === '1';
+const users = [['1', 'ana'], ['2', 'NULL'], ['3', 'tab\\there']];
+
+if (/version\(\)/.test(sql)) out([['version()'], ['8.4.0']]);
+else if (/SELECT DATABASE\(\)/.test(sql)) out([['DATABASE()'], [noDB ? 'NULL' : 'shop']]);
+else if (/information_schema\.TABLES/.test(sql)) { if (!noDB) out([['TABLE_NAME', 'TABLE_TYPE'], ['users', 'BASE TABLE'], ['active_users', 'VIEW']]); }
+else if (/COUNT\(\*\) FROM `users`/.test(sql)) out([['COUNT(*)'], ['3']]);
+else if (/FROM `users` LIMIT (\d+) OFFSET (\d+)/.test(sql)) {
+  const [, limit, offset] = sql.match(/LIMIT (\d+) OFFSET (\d+)/).map(Number);
+  out([['id', 'name'], ...users.slice(offset, offset + limit)]);
+} else {
+  process.stderr.write('ERROR 1064 (42000): fake-lerd does not know this query\n');
+  process.exit(1);
+}
