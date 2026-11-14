@@ -1,44 +1,65 @@
 #!/usr/bin/env node
 // POST /api/plugins/db-browser/db?site=<site>
-// {action: "tables"} lists the tables, {action: "rows", table, schema, offset}
-// answers one page of one of them, {action: "page_size", size} remembers how
-// many rows a page shows.
-const { engineOf, tables, page } = require('../lib/db');
-const { PAGE_SIZES, readSettings, savePageSize } = require('../lib/settings');
+// {action: "tables", service?, database?} opens one of the site's databases,
+// remembering the pick, and lists its tables; {action: "rows", table, schema,
+// offset, service?, database?} answers one page of a table; {action:
+// "page_size", size} remembers how many rows a page shows.
+const fs = require('node:fs');
+const { withEngine, databaseName, tables, page } = require('../lib/db');
+const { connectionsFor, pickConnection } = require('../lib/connections');
+const { PAGE_SIZES, readSettings, savePageSize, saveConnection } = require('../lib/settings');
+const { api } = require('../lib/lerd');
 
 const DATA = process.env.LERD_PLUGIN_DATA;
 
 function readBody() {
-  const text = require('node:fs').readFileSync(0, 'utf8');
+  const text = fs.readFileSync(0, 'utf8');
   return text ? JSON.parse(text) : {};
 }
 
-function main() {
+// The connection a request may use: one of the site's own, checked against
+// what lerd lists rather than what the request says.
+async function connect(body) {
+  const siteName = process.env.LERD_SITE;
+  const sitePath = process.env.LERD_SITE_PATH;
+  if (!siteName || !sitePath) throw new Error('pick a site: ?site=<name>');
+  const [sites, services] = await Promise.all([api('/api/sites'), api('/api/databases')]);
+  const site = sites.find((s) => s.name === siteName);
+  if (!site) throw new Error(`lerd lists no site ${siteName}`);
+  const list = connectionsFor(site, services);
+  const requested = body.service ? { service: String(body.service), database: String(body.database ?? '') } : null;
+  const { conn, notice } = pickConnection(list, requested, readSettings(DATA).connections[siteName]);
+  if (requested && body.action === 'tables') saveConnection(DATA, siteName, conn);
+  return { conn: withEngine({ sitePath, ...conn }), list, notice };
+}
+
+async function main() {
   const body = readBody();
   if (body.action === 'page_size') {
     savePageSize(DATA, Number(body.size));
-    return readSettings(DATA);
+    return { pageSize: readSettings(DATA).pageSize };
   }
-  const sitePath = process.env.LERD_SITE_PATH;
-  if (!sitePath) throw new Error('pick a site: ?site=<name>');
-  const engine = engineOf(sitePath);
-  switch (body.action) {
-    case 'tables':
-      return { engine, tables: tables(sitePath, engine), pageSize: readSettings(DATA).pageSize, pageSizes: PAGE_SIZES };
-    case 'rows': {
-      const table = tables(sitePath, engine).find((t) => t.name === body.table && t.schema === (body.schema || ''));
-      if (!table) throw new Error(`no table ${body.table} in this database`);
-      const limit = readSettings(DATA).pageSize;
-      const offset = Math.max(0, Number.parseInt(body.offset, 10) || 0);
-      return { engine, offset, limit, ...page(sitePath, engine, table, { limit, offset }) };
-    }
+  if (body.action !== 'tables' && body.action !== 'rows') throw new Error(`unknown action ${body.action}`);
+  const { conn, list, notice } = await connect(body);
+  const connection = { service: conn.service, database: conn.database, engine: conn.engine };
+  if (body.action === 'tables') {
+    return {
+      engine: conn.engine, connection, connections: list, notice,
+      database: databaseName(conn), tables: tables(conn),
+      pageSize: readSettings(DATA).pageSize, pageSizes: PAGE_SIZES,
+    };
   }
-  throw new Error(`unknown action ${body.action}`);
+  const table = tables(conn).find((t) => t.name === body.table && t.schema === (body.schema || ''));
+  if (!table) throw new Error(`no table ${body.table} in this database`);
+  const limit = readSettings(DATA).pageSize;
+  const offset = Math.max(0, Number.parseInt(body.offset, 10) || 0);
+  return { engine: conn.engine, connection, offset, limit, ...page(conn, table, { limit, offset }) };
 }
 
-try {
-  process.stdout.write(JSON.stringify(main()));
-} catch (e) {
-  console.error(e.message);
-  process.exit(1);
-}
+main().then(
+  (out) => process.stdout.write(JSON.stringify(out)),
+  (e) => {
+    console.error(e.message);
+    process.exit(1);
+  },
+);

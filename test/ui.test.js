@@ -16,6 +16,12 @@ window.calls = [];
 window.hold = false;
 const TOTAL = 230;
 let pageSize = 100;
+const CONNECTIONS = [{ service: 'postgres', database: 'shop', engine: 'postgres' }, { service: 'mysql', database: 'blog', engine: 'mysql' }];
+const TABLES = {
+  shop: [{ schema: 'public', name: 'users', view: false }, { schema: 'public', name: 'orders', view: false }, { schema: 'audit', name: 'events', view: true }],
+  blog: [{ schema: '', name: 'posts', view: false }],
+};
+let current = CONNECTIONS[0];
 const waitForRelease = () => new Promise((r) => { const t = setInterval(() => { if (!window.hold) { clearInterval(t); r(); } }, 10); });
 window.lerd = {
   context: { site: 'shop', domain: 'shop.test', branch: '', lang: 'en' },
@@ -23,14 +29,18 @@ window.lerd = {
     const req = JSON.parse(body);
     window.calls.push(req);
     if (window.fail) throw new Error(window.fail);
-    if (req.action === 'tables') return JSON.stringify({ engine: 'postgres', pageSize, pageSizes: [50, 100, 250],
-      tables: [{ schema: 'public', name: 'users', view: false }, { schema: 'public', name: 'orders', view: false }, { schema: 'audit', name: 'events', view: true }] });
+    if (req.action === 'tables') {
+      const list = window.single ? CONNECTIONS.slice(0, 1) : CONNECTIONS;
+      if (req.service) current = list.find((c) => c.service === req.service && c.database === req.database);
+      return JSON.stringify({ engine: current.engine, connection: current, connections: list, database: current.database,
+        notice: window.notice, pageSize, pageSizes: [50, 100, 250], tables: TABLES[current.database] });
+    }
     if (req.action === 'page_size') { pageSize = req.size; return JSON.stringify({ pageSize }); }
     if (req.action === 'rows') {
       await waitForRelease();
       const n = Math.min(pageSize, TOTAL - req.offset);
       const rows = Array.from({ length: n }, (_, i) => [String(req.offset + i + 1), i === 0 ? null : '<img src=x onerror="window.pwned=1">']);
-      return JSON.stringify({ engine: 'postgres', offset: req.offset, limit: pageSize, total: TOTAL, columns: ['id', 'note'], rows });
+      return JSON.stringify({ engine: current.engine, connection: current, offset: req.offset, limit: pageSize, total: TOTAL, columns: ['id', 'note'], rows });
     }
     throw new Error('unknown action ' + req.action);
   },
@@ -152,7 +162,7 @@ test('a new page size is saved and the table reloads from its first page', async
   assert.equal(await text(page, '#pages'), '1');
   const calls = await page.evaluate(() => window.calls);
   assert.deepStrictEqual(calls.at(-2), { action: 'page_size', size: 250 });
-  assert.deepStrictEqual(calls.at(-1), { action: 'rows', table: 'users', schema: 'public', offset: 0 });
+  assert.deepStrictEqual(calls.at(-1), { action: 'rows', table: 'users', schema: 'public', offset: 0, service: 'postgres', database: 'shop' });
 });
 
 test('says why when the database cannot be read', async () => {
@@ -161,4 +171,40 @@ test('says why when the database cannot be read', async () => {
   assert.equal(await text(page, '#grid .lerd-empty'), "this site's .env names no database, so there is nothing to browse");
   assert.equal(await page.locator('#tables button').count(), 0);
   assert.equal(await page.locator('#filter').isDisabled(), true);
+});
+
+test('switches between the site\'s databases, and every call after names the one picked', async () => {
+  const { page, errors } = await open();
+  await page.locator('#tables button').first().waitFor();
+  assert.deepStrictEqual(await page.locator('#conn option').allTextContents(), ['shop · postgres', 'blog · mysql']);
+  assert.equal(await page.locator('#conn').isVisible(), true);
+  await page.locator('#tables button', { hasText: 'users' }).click();
+  await page.locator('#grid table').waitFor();
+
+  await page.locator('#conn').selectOption({ label: 'blog · mysql' });
+  await page.locator('#tables button', { hasText: 'posts' }).waitFor();
+  assert.deepStrictEqual(await page.locator('#tables button .n').allTextContents(), ['posts']);
+  assert.equal(await text(page, '#engine'), 'MySQL / MariaDB');
+  assert.equal(await text(page, '#grid .lerd-empty'), 'Pick a table.');
+  assert.equal(await text(page, '#title'), '');
+
+  await page.locator('#tables button', { hasText: 'posts' }).click();
+  await page.locator('#grid table').waitFor();
+  const calls = await page.evaluate(() => window.calls);
+  assert.deepStrictEqual(calls.find((c) => c.action === 'tables' && c.service), { action: 'tables', service: 'mysql', database: 'blog' });
+  assert.deepStrictEqual(calls.at(-1), { action: 'rows', table: 'posts', schema: '', offset: 0, service: 'mysql', database: 'blog' });
+  assert.deepStrictEqual(errors, []);
+});
+
+test('a site with one database shows its name instead of a picker', async () => {
+  const { page } = await open(() => (window.single = true));
+  await page.locator('#tables button').first().waitFor();
+  assert.equal(await page.locator('#conn').isVisible(), false);
+  assert.equal(await text(page, '#dbname'), 'shop');
+});
+
+test('says so when the remembered database is gone', async () => {
+  const { page } = await open(() => (window.notice = "mysql / dropped is no longer one of this site's databases, showing postgres / shop"));
+  await page.locator('#tables button').first().waitFor();
+  assert.equal(await text(page, '#notice'), "mysql / dropped is no longer one of this site's databases, showing postgres / shop");
 });

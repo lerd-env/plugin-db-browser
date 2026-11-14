@@ -10,8 +10,9 @@
     body { display: flex; flex-direction: column; box-sizing: border-box; margin: 0; padding: 0; }
     .browser { flex: 1; min-height: 0; display: flex; overflow: hidden; border: 0; border-radius: 0; }
     .side { flex: 0 0 240px; display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--lerd-line); }
-    .side .search { padding: 8px; border-bottom: 1px solid var(--lerd-line); }
-    .side input { width: 100%; box-sizing: border-box; }
+    .side .search { display: flex; flex-direction: column; gap: 8px; padding: 8px; border-bottom: 1px solid var(--lerd-line); }
+    .side input, .side select { width: 100%; box-sizing: border-box; }
+    .side #notice { white-space: normal; }
     .tables { flex: 1; min-height: 0; overflow: auto; }
     .tables button { display: flex; align-items: center; gap: 8px; width: 100%; height: auto; padding: 6px 12px; border: 0; border-radius: 0; background: none; text-align: left; justify-content: flex-start; }
     .tables button .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -39,7 +40,12 @@
 <body>
   <div class="lerd-card flush browser">
     <div class="side">
-      <div class="search"><input id="filter" type="search" placeholder="Filter tables" aria-label="Filter tables" disabled></div>
+      <div class="search">
+        <select id="conn" aria-label="Database" hidden></select>
+        <span id="dbname" class="lerd-mono" hidden></span>
+        <span id="notice" class="lerd-pill warn" hidden></span>
+        <input id="filter" type="search" placeholder="Filter tables" aria-label="Filter tables" disabled>
+      </div>
       <div id="tables" class="tables"></div>
     </div>
     <div class="main">

@@ -2,7 +2,7 @@
 // table on the right. Every value from the database goes in through textContent.
 const $ = (id) => document.getElementById(id);
 const ENGINES = { mysql: 'MySQL / MariaDB', postgres: 'PostgreSQL', sqlite: 'SQLite' };
-const state = { tables: [], table: null, offset: 0, pageSize: 100 };
+const state = { tables: [], table: null, offset: 0, pageSize: 100, connection: null };
 
 function call(body) {
   const site = encodeURIComponent(lerd.context.site);
@@ -69,7 +69,8 @@ async function openTable(t, offset) {
   setPaging(false);
   showLoading(`Loading ${label(t)}...`);
   try {
-    const page = await call({ action: 'rows', table: t.name, schema: t.schema, offset });
+    const { service, database } = state.connection;
+    const page = await call({ action: 'rows', table: t.name, schema: t.schema, offset, service, database });
     if (state.table !== t || state.offset !== offset) return; // a newer click won
     drawGrid(page);
     const pages = Math.max(1, Math.ceil(page.total / page.limit));
@@ -107,14 +108,39 @@ $('size').onchange = async () => {
   }
 };
 
-async function start() {
+const connLabel = (c, name) => `${c.database || name} · ${c.service || 'site'}`;
+
+// The site's databases: a picker when it has more than one, its name otherwise.
+function drawConnections({ connections, connection, database, notice }) {
+  const one = connections.length < 2;
+  $('conn').hidden = one;
+  $('dbname').hidden = !one;
+  $('dbname').textContent = database ?? '';
+  $('conn').replaceChildren(...connections.map((c, i) => el('option', {
+    value: i, textContent: connLabel(c, database),
+    selected: c.service === connection.service && c.database === connection.database,
+  })));
+  $('notice').hidden = !notice;
+  $('notice').textContent = notice ?? '';
+  state.connections = connections;
+}
+
+// Opens the site's remembered database, or the one picked.
+async function start(pick) {
+  state.table = null;
+  state.tables = [];
+  $('title').textContent = $('range').textContent = '';
+  setPaging(false);
+  $('grid').replaceChildren();
   $('tables').replaceChildren(loading('Loading tables...'));
   try {
-    const { engine, tables, pageSize, pageSizes } = await call({ action: 'tables' });
-    state.tables = tables;
-    state.pageSize = pageSize;
-    $('size').replaceChildren(...pageSizes.map((n) => el('option', { value: n, textContent: n, selected: n === pageSize })));
-    $('engine').textContent = ENGINES[engine] || engine;
+    const res = await call({ action: 'tables', ...pick });
+    state.tables = res.tables;
+    state.pageSize = res.pageSize;
+    state.connection = res.connection;
+    drawConnections(res);
+    $('size').replaceChildren(...res.pageSizes.map((n) => el('option', { value: n, textContent: n, selected: n === res.pageSize })));
+    $('engine').textContent = ENGINES[res.engine] || res.engine;
     $('engine').hidden = false;
     $('filter').disabled = false;
     $('grid').replaceChildren(note('Pick a table.'));
@@ -125,5 +151,9 @@ async function start() {
   }
 }
 
+$('conn').onchange = () => {
+  const c = state.connections[Number($('conn').value)];
+  start({ service: c.service, database: c.database });
+};
 $('filter').oninput = drawTables;
 start();

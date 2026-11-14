@@ -1,19 +1,47 @@
 #!/usr/bin/env node
-// Stands in for `lerd db:shell` on a MySQL server, printing what the mysql
-// client prints in batch mode. FAKE_NO_DB=1 is a server with no database picked.
-const sql = require('node:fs').readFileSync(0, 'utf8');
+// Stands in for `lerd db:shell`, printing what the mysql client prints in batch
+// mode, or psql's csv output for the postgres service. Databases: the site's
+// default and mysql/shop hold users, mariadb-app/legacy holds orders,
+// postgres/blog holds posts. FAKE_NO_DB=1 is a server with no database picked.
+// FAKE_LOG names a file each call's arguments are appended to.
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (process.env.FAKE_LOG) fs.appendFileSync(process.env.FAKE_LOG, args.join(' ') + '\n');
+const flag = (name) => (args.find((a) => a.startsWith(`--${name}=`)) || '').split('=').slice(1).join('=');
+const service = flag('service');
+const database = flag('database');
+const sql = fs.readFileSync(0, 'utf8');
+
+function fail(msg) {
+  process.stderr.write(msg + '\n');
+  process.exit(1);
+}
+
+if (service === 'postgres') {
+  if (database !== 'blog') fail(`FATAL:  database "${database}" does not exist`);
+  const csv = (lines) => process.stdout.write(lines.map((l) => l.join(',')).join('\n') + '\n');
+  if (/version\(\)/.test(sql)) csv([['version'], ['PostgreSQL 16.4']]);
+  else if (/information_schema\.tables/.test(sql)) csv([['table_schema', 'table_name', 'table_type'], ['public', 'posts', 'BASE TABLE']]);
+  else if (/COUNT\(\*\) FROM "public"\."posts"/.test(sql)) csv([['count'], ['1']]);
+  else if (/FROM "public"\."posts" LIMIT/.test(sql)) csv([['id', 'title'], ['1', 'Hello']]);
+  else fail('ERROR:  fake-lerd does not know this query');
+  process.exit(0);
+}
+
 const out = (lines) => process.stdout.write(lines.map((l) => l.join('\t')).join('\n') + '\n');
 const noDB = process.env.FAKE_NO_DB === '1';
 const users = [['1', 'ana'], ['2', 'NULL'], ['3', 'tab\\there']];
+const db = service === 'mariadb-app' ? 'legacy' : 'shop';
+if (service && database !== db) fail(`ERROR 1049 (42000): Unknown database '${database}'`);
 
 if (/version\(\)/.test(sql)) out([['version()'], ['8.4.0']]);
-else if (/SELECT DATABASE\(\)/.test(sql)) out([['DATABASE()'], [noDB ? 'NULL' : 'shop']]);
-else if (/information_schema\.TABLES/.test(sql)) { if (!noDB) out([['TABLE_NAME', 'TABLE_TYPE'], ['users', 'BASE TABLE'], ['active_users', 'VIEW']]); }
-else if (/COUNT\(\*\) FROM `users`/.test(sql)) out([['COUNT(*)'], ['3']]);
+else if (/SELECT DATABASE\(\)/.test(sql)) out([['DATABASE()'], [noDB ? 'NULL' : db]]);
+else if (/information_schema\.TABLES/.test(sql)) {
+  if (noDB) process.exit(0);
+  if (db === 'legacy') out([['TABLE_NAME', 'TABLE_TYPE'], ['orders', 'BASE TABLE']]);
+  else out([['TABLE_NAME', 'TABLE_TYPE'], ['users', 'BASE TABLE'], ['active_users', 'VIEW']]);
+} else if (/COUNT\(\*\) FROM `users`/.test(sql)) out([['COUNT(*)'], ['3']]);
 else if (/FROM `users` LIMIT (\d+) OFFSET (\d+)/.test(sql)) {
   const [, limit, offset] = sql.match(/LIMIT (\d+) OFFSET (\d+)/).map(Number);
   out([['id', 'name'], ...users.slice(offset, offset + limit)]);
-} else {
-  process.stderr.write('ERROR 1064 (42000): fake-lerd does not know this query\n');
-  process.exit(1);
-}
+} else fail('ERROR 1064 (42000): fake-lerd does not know this query');
