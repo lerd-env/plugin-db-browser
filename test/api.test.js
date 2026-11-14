@@ -222,3 +222,31 @@ test('two statements, or nothing to run, are refused before anything runs', asyn
   assert.match((await call({ action: 'query', sql: '  -- nothing' })).error, /nothing to run/);
   assert.doesNotMatch(logged(), /DROP/);
 });
+
+const edits = [{ type: 'update', key: { id: '1' }, set: { name: 'x' } }, { type: 'delete', key: { id: '2' } }];
+
+test('apply shows the statements first and runs nothing until confirmed', async () => {
+  const { json } = await call({ action: 'apply', table: 'users', changes: edits });
+  assert.equal(json.confirm, 'Apply 2 changes to users?');
+  assert.deepStrictEqual(json.statements, ["UPDATE `users` SET `name` = 'x' WHERE `id` = '1';", "DELETE FROM `users` WHERE `id` = '2';"]);
+  assert.doesNotMatch(logged(), /START TRANSACTION/);
+});
+
+test('confirmed edits run in one transaction', async () => {
+  const { json } = await call({ action: 'apply', table: 'users', changes: edits, confirm: true });
+  assert.equal(json.applied, 2);
+  assert.match(logged(), /START TRANSACTION;\nUPDATE `users` SET `name` = 'x' WHERE `id` = '1';\nDELETE FROM `users` WHERE `id` = '2';\nCOMMIT;/);
+});
+
+test('the database\'s refusal comes back as the error', async () => {
+  const r = await call({ action: 'apply', table: 'users', changes: [{ type: 'insert', values: { id: 'FAIL_ME' } }], confirm: true });
+  assert.equal(r.status, 1);
+  assert.match(r.error, /Duplicate entry 'FAIL_ME'/);
+});
+
+test('views and bad edits are refused before anything runs', async () => {
+  assert.match((await call({ action: 'apply', table: 'active_users', changes: edits, confirm: true })).error, /active_users is a view/);
+  assert.match((await call({ action: 'apply', table: 'users', changes: [{ type: 'update', key: { id: '1' }, set: { ghost: 'x' } }], confirm: true })).error, /no column ghost in users/);
+  assert.match((await call({ action: 'apply', table: 'nope', changes: edits, confirm: true })).error, /no table nope/);
+  assert.doesNotMatch(logged(), /START TRANSACTION/);
+});

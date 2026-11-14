@@ -9,9 +9,11 @@
 // {action: "query", sql, confirm?} runs one statement: a read at once, capped
 // at CAP rows; a write only with confirm, answering {confirm} until then.
 // {action: "history"} lists the site's last queries.
+// {action: "apply", table, schema, changes, confirm?} applies staged edits in
+// one transaction, answering {confirm, statements} until confirmed.
 const fs = require('node:fs');
-const { withEngine, databaseName, tables, page, structure, query } = require('../lib/db');
-const { OPERATORS } = require('../lib/sql');
+const { withEngine, databaseName, tables, page, structure, query, columns, applyAll } = require('../lib/db');
+const { OPERATORS, buildChanges } = require('../lib/sql');
 const { connectionsFor, pickConnection } = require('../lib/connections');
 const { PAGE_SIZES, readSettings, savePageSize, saveConnection } = require('../lib/settings');
 const { api } = require('../lib/lerd');
@@ -58,6 +60,17 @@ function runQuery(conn, connection, sql, confirmed) {
   return { engine: conn.engine, connection, read, ms, truncated, cap: CAP, ...result };
 }
 
+function applyChanges(conn, connection, table, changes, confirmed) {
+  if (table.view) throw new Error(`${table.name} is a view, so its rows cannot be edited here`);
+  const statements = buildChanges({ engine: conn.engine, table, columns: columns(conn, table), changes });
+  if (!confirmed) {
+    const n = statements.length;
+    return { connection, confirm: `Apply ${n} ${n === 1 ? 'change' : 'changes'} to ${table.name}?`, statements };
+  }
+  applyAll(conn, statements);
+  return { connection, applied: statements.length };
+}
+
 async function main() {
   const body = readBody();
   if (body.action === 'page_size') {
@@ -65,7 +78,7 @@ async function main() {
     return { pageSize: readSettings(DATA).pageSize };
   }
   if (body.action === 'history') return { history: readHistory(DATA, process.env.LERD_SITE) };
-  if (!['tables', 'rows', 'structure', 'query'].includes(body.action)) throw new Error(`unknown action ${body.action}`);
+  if (!['tables', 'rows', 'structure', 'query', 'apply'].includes(body.action)) throw new Error(`unknown action ${body.action}`);
   const { conn, list, notice } = await connect(body);
   const connection = { service: conn.service, database: conn.database, engine: conn.engine };
   if (body.action === 'tables') {
@@ -78,6 +91,7 @@ async function main() {
   if (body.action === 'query') return runQuery(conn, connection, String(body.sql ?? ''), body.confirm === true);
   const table = tables(conn).find((t) => t.name === body.table && t.schema === (body.schema || ''));
   if (!table) throw new Error(`no table ${body.table} in this database`);
+  if (body.action === 'apply') return applyChanges(conn, connection, table, body.changes, body.confirm === true);
   if (body.action === 'structure') return { engine: conn.engine, connection, ...structure(conn, table) };
   const limit = readSettings(DATA).pageSize;
   const offset = Math.max(0, Number.parseInt(body.offset, 10) || 0);

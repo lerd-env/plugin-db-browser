@@ -38,6 +38,11 @@ const users = [['1', 'ana'], ['2', 'NULL'], ['3', 'tab\\there']];
 const db = service === 'mariadb-app' ? 'legacy' : 'shop';
 if (service && database !== db) fail(`ERROR 1049 (42000): Unknown database '${database}'`);
 
+if (/^START TRANSACTION;/.test(sql)) {
+  // A batch of edits: a value of FAIL_ME stands for a statement the server rejects.
+  if (/FAIL_ME/.test(sql)) fail("ERROR 1062 (23000) at line 2: Duplicate entry 'FAIL_ME' for key 'PRIMARY'");
+  process.exit(0);
+}
 if (/version\(\)/.test(sql)) out([['version()'], ['8.4.0']]);
 else if (/SELECT DATABASE\(\)/.test(sql)) out([['DATABASE()'], [noDB ? 'NULL' : db]]);
 else if (/information_schema\.TABLES/.test(sql)) {

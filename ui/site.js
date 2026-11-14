@@ -6,6 +6,7 @@ const ENGINES = { mysql: 'MySQL / MariaDB', postgres: 'PostgreSQL', sqlite: 'SQL
 const state = {
   tables: [], table: null, offset: 0, pageSize: 100, connection: null, connections: [],
   view: 'data', sort: null, filter: null, operators: [], format: 'table', result: null,
+  page: null, edits: dbEdits.createEdits(), cellAt: null,
 };
 
 // lerd ends a failed endpoint's message with the process's exit status, which
@@ -49,38 +50,102 @@ function nextSort(column) {
   return state.sort.dir === 'asc' ? { column, dir: 'desc' } : null;
 }
 
+const valueCell = (v) => (v === null
+  ? el('td', { className: 'null lerd-muted', textContent: 'NULL' })
+  : el('td', { textContent: v, title: v.length > 40 ? v : '' }));
+
 // Rows as a table whose cells open in the side panel; head draws each header.
 function resultTable(columns, rows, head = (c) => el('th', { textContent: c })) {
   const body = rows.map((r) => el('tr', {}, ...r.map((v, i) => {
-    const td = v === null
-      ? el('td', { className: 'null lerd-muted', textContent: 'NULL' })
-      : el('td', { textContent: v, title: v.length > 40 ? v : '' });
+    const td = valueCell(v);
     td.onclick = () => showCell(columns[i], v);
     return td;
   })));
   return el('table', {}, el('thead', {}, el('tr', {}, ...columns.map(head))), el('tbody', {}, ...body));
 }
 
-function drawGrid({ columns, rows }) {
+// A table with a primary key, and not a view, can be edited.
+const editable = () => !!state.page?.keys?.length && !state.table?.view;
+
+// One cell of the data grid: its staged value, opening in the side panel on a
+// click and as an input on a double click. at is {row} or {insert}.
+function gridCell(column, at) {
+  const { value, changed } = 'insert' in at
+    ? { value: state.edits.inserts[at.insert][column] ?? null, changed: column in state.edits.inserts[at.insert] }
+    : dbEdits.shown(state.edits, state.page, at.row, column);
+  const td = 'insert' in at && !changed ? el('td', { className: 'lerd-muted', textContent: 'default' }) : valueCell(value);
+  if (changed) td.classList.add('changed');
+  td.onclick = () => showCell(column, value, at);
+  td.ondblclick = () => editInline(td, column, value, at);
+  return td;
+}
+
+function stage(column, value, at) {
+  if ('insert' in at) dbEdits.stageInsert(state.edits, at.insert, column, value);
+  else dbEdits.stageUpdate(state.edits, state.page, at.row, column, value);
+  drawGrid();
+}
+
+// Enter or leaving the field stages the value, Escape drops it.
+function editInline(td, column, value, at) {
+  if (!editable() || state.edits.deletes.has(at.row)) return;
+  let done = false;
+  const input = el('input', { type: 'text', value: value ?? '' });
+  const finish = (keep) => {
+    if (done) return;
+    done = true;
+    if (keep) stage(column, input.value, at);
+    else drawGrid();
+  };
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') finish(true);
+    if (e.key === 'Escape') finish(false);
+  };
+  input.onblur = () => finish(true);
+  td.replaceChildren(input);
+  input.focus();
+  input.select();
+}
+
+function drawChanges() {
+  const n = dbEdits.count(state.edits);
+  $('changes').hidden = n === 0;
+  $('changes-count').textContent = plural(n, 'change');
+}
+
+function drawGrid() {
+  const { columns, rows } = state.page;
   const grid = $('grid');
   grid.replaceChildren();
+  drawChanges();
   if (!columns.length) return grid.append(note('No columns.'));
   const head = (c) => {
     const sorted = state.sort?.column === c ? state.sort.dir : '';
     const th = el('th', { textContent: c + (sorted ? (sorted === 'asc' ? ' ▲' : ' ▼') : ''), title: 'Sort by ' + c });
     if (sorted) th.setAttribute('aria-sort', sorted === 'asc' ? 'ascending' : 'descending');
-    th.onclick = () => {
+    th.onclick = guarded(() => {
       state.sort = nextSort(c);
       loadRows(0);
-    };
+    });
     return th;
   };
-  grid.append(resultTable(columns, rows, head));
-  if (!rows.length) grid.append(note(state.filter ? 'No rows match the filter.' : 'No rows.'));
+  const inserted = state.edits.inserts.map((_, i) => el('tr', { className: 'inserted' }, ...columns.map((c) => gridCell(c, { insert: i }))));
+  const existing = rows.map((_, r) => el('tr', { className: state.edits.deletes.has(r) ? 'deleted' : '' }, ...columns.map((c) => gridCell(c, { row: r }))));
+  grid.append(el('table', {}, el('thead', {}, el('tr', {}, ...columns.map(head))), el('tbody', {}, ...inserted, ...existing)));
+  if (!rows.length && !inserted.length) grid.append(note(state.filter ? 'No rows match the filter.' : 'No rows.'));
 }
 
-// A value in full, laid out when it is a JSON object or array.
-function showCell(column, value) {
+// A value in full, laid out when it is a JSON object or array. A cell of an
+// editable grid (at set) can also be changed, nulled or have its row deleted.
+function showCell(column, value, at) {
+  state.cellAt = at ? { column, ...at } : null;
+  const canEdit = !!at && editable() && !state.edits.deletes.has(at.row);
+  $('cell-edit').hidden = !(at && editable());
+  $('cell-input').value = value ?? '';
+  $('cell-input').disabled = $('cell-set').disabled = !canEdit;
+  $('cell-null').checked = value === null;
+  $('cell-null').disabled = !canEdit;
+  $('cell-delete').textContent = at && 'insert' in at ? 'Remove row' : state.edits.deletes.has(at?.row) ? 'Keep row' : 'Delete row';
   let shown = value ?? 'NULL';
   try {
     const parsed = JSON.parse(value);
@@ -92,6 +157,54 @@ function showCell(column, value) {
   $('cell').hidden = false;
 }
 $('cell-close').onclick = () => ($('cell').hidden = true);
+$('cell-null').onchange = () => ($('cell-input').disabled = $('cell-null').checked);
+$('cell-set').onclick = () => {
+  const { column, ...at } = state.cellAt;
+  stage(column, $('cell-null').checked ? null : $('cell-input').value, at);
+  $('cell').hidden = true;
+};
+$('cell-delete').onclick = () => {
+  const { insert, row } = state.cellAt;
+  if (insert !== undefined) dbEdits.removeInsert(state.edits, insert);
+  else dbEdits.toggleDelete(state.edits, row);
+  $('cell').hidden = true;
+  drawGrid();
+};
+$('addrow').onclick = () => {
+  dbEdits.addInsert(state.edits);
+  drawGrid();
+};
+$('discard').onclick = () => {
+  state.edits = dbEdits.createEdits();
+  $('changes-error').textContent = '';
+  drawGrid();
+};
+
+// Staged edits are lost when the page reloads, so moving away asks first.
+async function canLeave() {
+  const n = dbEdits.count(state.edits);
+  if (!n || await ask(`Discard ${plural(n, 'unsaved change')}?`, '', 'Discard')) {
+    state.edits = dbEdits.createEdits();
+    return true;
+  }
+  return false;
+}
+// fn runs only once any staged edits are discarded.
+const guarded = (fn) => async (...args) => (await canLeave()) && fn(...args);
+
+$('commit').onclick = async () => {
+  const changes = dbEdits.toChanges(state.edits, state.page);
+  $('changes-error').textContent = '';
+  try {
+    const preview = await call({ action: 'apply', ...tableRef(), changes });
+    if (!(await ask(preview.confirm, preview.statements.join('\n'), 'Commit'))) return;
+    await call({ action: 'apply', ...tableRef(), changes, confirm: true });
+    state.edits = dbEdits.createEdits();
+    loadRows(state.offset);
+  } catch (e) {
+    $('changes-error').textContent = e.message;
+  }
+};
 $('cell-copy').onclick = () => navigator.clipboard?.writeText($('cell-value').textContent).catch(() => {});
 
 // The old page stays dimmed under the spinner, so paging does not jump.
@@ -122,7 +235,12 @@ async function loadRows(offset) {
   try {
     const page = await call({ action: 'rows', ...tableRef(), offset, ...state.sort && { sort: state.sort }, ...state.filter && { filter: state.filter } });
     if (stale()) return; // a newer click won
-    drawGrid(page);
+    state.page = page;
+    state.edits = dbEdits.createEdits();
+    $('changes-error').textContent = '';
+    drawGrid();
+    $('addrow').hidden = !editable();
+    $('readonly').hidden = editable();
     drawFilterColumns(page.columns);
     const pages = Math.max(1, Math.ceil(page.total / page.limit));
     const fmt = (n) => n.toLocaleString();
@@ -187,11 +305,11 @@ function showView(view) {
     $('sql').focus();
   }
 }
-for (const b of $('views').querySelectorAll('[role="tab"]')) b.onclick = () => showView(b.dataset.view);
+for (const b of $('views').querySelectorAll('[role="tab"]')) b.onclick = guarded(() => showView(b.dataset.view));
 
 // A table opens unsorted and unfiltered, in whichever of its views was last
 // open, or its data when coming from the SQL editor.
-function openTable(t) {
+const openTable = guarded((t) => {
   if (state.view === 'query') state.view = 'data';
   if (t !== state.table) {
     state.sort = state.filter = null;
@@ -204,21 +322,23 @@ function openTable(t) {
   state.offset = 0;
   $('title').textContent = label(t);
   showView(state.view);
-}
+});
 
 $('fop').onchange = () => ($('fval').disabled = $('fop').value.startsWith('is '));
 $('filterbar').onsubmit = (e) => {
   e.preventDefault();
-  state.filter = { column: $('fcol').value, op: $('fop').value, value: $('fval').value };
-  loadRows(0);
+  guarded(() => {
+    state.filter = { column: $('fcol').value, op: $('fop').value, value: $('fval').value };
+    loadRows(0);
+  })();
 };
-$('fclear').onclick = () => {
+$('fclear').onclick = guarded(() => {
   $('fval').value = '';
   state.filter = null;
   loadRows(0);
-};
+});
 
-const goToPage = (n) => loadRows((n - 1) * state.pageSize);
+const goToPage = guarded((n) => loadRows((n - 1) * state.pageSize));
 $('prev').onclick = () => goToPage(Number($('page').value) - 1);
 $('next').onclick = () => goToPage(Number($('page').value) + 1);
 $('page').onchange = () => {
@@ -227,6 +347,10 @@ $('page').onchange = () => {
 };
 $('size').onchange = async () => {
   const size = Number($('size').value);
+  if (!(await canLeave())) {
+    $('size').value = state.pageSize;
+    return;
+  }
   try {
     await call({ action: 'page_size', size });
     state.pageSize = size;
@@ -240,11 +364,12 @@ $('size').onchange = async () => {
 // back as a question, asked here in a dialog, and is sent again confirmed.
 const plural = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
 
-function ask(text, sql) {
+function ask(text, sql, ok = 'Run') {
   return new Promise((resolve) => {
     const d = $('confirm');
     $('confirm-text').textContent = text;
     $('confirm-sql').textContent = sql;
+    $('confirm-run').textContent = ok;
     const done = (yes) => {
       if (d.open) d.close();
       resolve(yes);
@@ -311,7 +436,7 @@ async function loadHistory() {
   } catch {}
 }
 
-$('sqlbtn').onclick = () => showView('query');
+$('sqlbtn').onclick = guarded(() => showView('query'));
 $('run').onclick = () => runQuery();
 $('sql').onkeydown = (e) => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -384,9 +509,10 @@ async function start(pick) {
   }
 }
 
-$('conn').onchange = () => {
+$('conn').onchange = async () => {
   const c = state.connections[Number($('conn').value)];
-  start({ service: c.service, database: c.database });
+  if (await canLeave()) return start({ service: c.service, database: c.database });
+  $('conn').value = String(state.connections.indexOf(state.connections.find((x) => x.service === state.connection.service && x.database === state.connection.database)));
 };
 $('filter').oninput = drawTables;
 start();

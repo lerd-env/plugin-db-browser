@@ -26,7 +26,8 @@
     .main .lerd-tabs { margin: 0; }
     .filterbar { gap: 8px; }
     .filterbar input { flex: 1; min-width: 120px; }
-    .content { flex: 1; min-height: 0; display: flex; }
+    /* The cell panel sits under the rows, across the full width. */
+    .content { flex: 1; min-height: 0; display: flex; flex-direction: column; }
     .grid { flex: 1; min-width: 0; min-height: 0; overflow: auto; position: relative; }
     .grid th { cursor: pointer; user-select: none; white-space: nowrap; }
     .grid td { cursor: pointer; }
@@ -39,7 +40,17 @@
     .qresult th { cursor: default; }
     .qresult pre { margin: 0; padding: 12px; white-space: pre; }
     #confirm pre { white-space: pre-wrap; max-height: 200px; overflow: auto; }
-    .cell { flex: 0 0 340px; min-width: 0; display: flex; flex-direction: column; border-left: 1px solid var(--lerd-line); }
+    .changesbar { gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--lerd-line); }
+    .changesbar .spacer { flex: 1; }
+    #changes-error:empty, #confirm-sql:empty { display: none; }
+    .grid td.changed { font-weight: 600; }
+    .grid tr.deleted td { text-decoration: line-through; opacity: 0.5; }
+    .grid tr.inserted td { font-style: italic; }
+    .grid td input { width: 100%; box-sizing: border-box; min-width: 120px; }
+    .cell-edit { flex: 0 0 340px; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-left: 1px solid var(--lerd-line); overflow: auto; }
+    .cell-edit textarea { resize: vertical; }
+    .cell { flex: 0 0 240px; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--lerd-line); }
+    .cell-body { flex: 1; min-height: 0; display: flex; }
     .cell .lerd-toolbar { border-bottom: 1px solid var(--lerd-line); }
     .cell pre { flex: 1; margin: 0; padding: 12px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
     .grid table { width: max-content; min-width: 100%; }
@@ -90,7 +101,16 @@
         <input id="fval" type="search" placeholder="Value" aria-label="Filter value">
         <button type="submit" class="primary">Filter</button>
         <button type="button" id="fclear">Clear</button>
+        <span id="readonly" class="lerd-pill" title="Only a table with a primary key can be edited here" hidden>read only</span>
+        <button type="button" id="addrow" hidden>Add row</button>
       </form>
+      <div id="changes" class="lerd-toolbar changesbar" hidden>
+        <span id="changes-count"></span>
+        <span id="changes-error" class="lerd-pill bad"></span>
+        <span class="spacer"></span>
+        <button type="button" id="discard">Discard</button>
+        <button type="button" id="commit" class="primary">Commit</button>
+      </div>
       <div class="content">
         <div id="grid" class="grid"></div>
         <div id="structure" class="structure" hidden></div>
@@ -116,7 +136,17 @@
             <button type="button" id="cell-copy">Copy</button>
             <button type="button" id="cell-close" aria-label="Close">Close</button>
           </div>
+          <div class="cell-body">
           <pre id="cell-value" class="lerd-mono"></pre>
+          <div id="cell-edit" class="cell-edit" hidden>
+            <textarea id="cell-input" class="lerd-mono" rows="4" aria-label="New value"></textarea>
+            <label><input type="checkbox" id="cell-null"> NULL</label>
+            <div class="lerd-toolbar">
+              <button type="button" id="cell-set" class="primary">Set</button>
+              <button type="button" id="cell-delete">Delete row</button>
+            </div>
+          </div>
+          </div>
         </aside>
       </div>
     </div>
@@ -131,6 +161,7 @@
   </dialog>
   <script src="lerd.js"></script>
   <script src="format.js"></script>
+  <script src="edits.js"></script>
   <script src="site.js"></script>
 </body>
 </html>

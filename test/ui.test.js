@@ -42,12 +42,17 @@ window.lerd = {
       const total = req.filter ? 5 : TOTAL;
       const n = Math.min(pageSize, total - req.offset);
       const rows = Array.from({ length: n }, (_, i) => [String(req.offset + i + 1), i === 0 ? null : '<img src=x onerror="window.pwned=1">', '{"a":1,"b":[2,3]}']);
-      return JSON.stringify({ engine: current.engine, connection: current, offset: req.offset, limit: pageSize, total, columns: ['id', 'note', 'meta'], keys: ['id'], rows });
+      return JSON.stringify({ engine: current.engine, connection: current, offset: req.offset, limit: pageSize, total, columns: ['id', 'note', 'meta'], keys: req.table === 'events' ? [] : ['id'], rows });
     }
     if (req.action === 'structure') {
       return JSON.stringify({ engine: current.engine, connection: current,
         columns: [{ name: 'id', type: 'bigint', nullable: false, default: null, key: true }, { name: 'note', type: 'text', nullable: true, default: "'x'", key: false }],
         indexes: [{ name: 'users_pkey', definition: 'UNIQUE (id)' }], foreignKeys: [] });
+    }
+    if (req.action === 'apply') {
+      if (!req.confirm) return JSON.stringify({ connection: current, confirm: 'Apply ' + req.changes.length + ' changes to ' + req.table + '?', statements: req.changes.map((c) => c.type.toUpperCase() + ' ...;') });
+      if (window.applyFails) throw new Error("Duplicate entry '2' for key 'PRIMARY'\\n\\nexit status 1");
+      return JSON.stringify({ connection: current, applied: req.changes.length });
     }
     if (req.action === 'history') return JSON.stringify({ history: ['SELECT * FROM orders', 'SELECT 1'] });
     if (req.action === 'query') {
@@ -314,6 +319,10 @@ test('clicking a cell shows its whole value, JSON laid out, and closes', async (
   await openUsers(page);
   await page.locator('#grid tbody tr').nth(1).locator('td').nth(2).click();
   assert.equal(await page.locator('#cell').isVisible(), true);
+  const grid = await page.locator('#grid').boundingBox();
+  const panel = await page.locator('#cell').boundingBox();
+  assert.ok(panel.y >= grid.y + grid.height - 1, 'the panel opens under the rows');
+  assert.ok(Math.abs(panel.width - grid.width) <= 1, 'the panel spans the rows\' full width');
   assert.equal(await text(page, '#cell-name'), 'meta');
   assert.equal(await text(page, '#cell-value'), '{\n  "a": 1,\n  "b": [\n    2,\n    3\n  ]\n}');
 
@@ -414,4 +423,112 @@ test('picking a table leaves the editor for that table\'s data', async () => {
   await openUsers(page);
   assert.equal(await page.locator('#query').isVisible(), false);
   assert.equal(await text(page, '#title'), 'users');
+});
+
+const dbl = (page, row, col) => page.locator('#grid tbody tr').nth(row).locator('td').nth(col).dblclick();
+const cell = (page, row, col) => page.locator('#grid tbody tr').nth(row).locator('td').nth(col);
+
+test('double-click edits a cell in place; Enter stages it, Discard puts it back', async () => {
+  const { page, errors } = await open();
+  await openUsers(page);
+  await dbl(page, 1, 1);
+  await page.locator('#grid td input').fill('changed');
+  await page.locator('#grid td input').press('Enter');
+  assert.equal(await cell(page, 1, 1).textContent(), 'changed');
+  assert.match(await cell(page, 1, 1).getAttribute('class'), /changed/);
+  assert.equal(await text(page, '#changes-count'), '1 change');
+
+  await dbl(page, 2, 1);
+  await page.locator('#grid td input').fill('ignored');
+  await page.locator('#grid td input').press('Escape');
+  assert.equal(await cell(page, 2, 1).textContent(), '<img src=x onerror="window.pwned=1">');
+  assert.equal(await text(page, '#changes-count'), '1 change');
+
+  await page.locator('#discard').click();
+  assert.equal(await page.locator('#changes').isVisible(), false);
+  assert.equal(await cell(page, 1, 1).textContent(), '<img src=x onerror="window.pwned=1">');
+  assert.deepStrictEqual(errors, []);
+});
+
+test('Commit shows the statements, then applies every staged edit and reloads', async () => {
+  const { page } = await open();
+  await openUsers(page);
+  await dbl(page, 1, 1);
+  await page.locator('#grid td input').fill('x');
+  await page.locator('#grid td input').press('Enter');
+  await cell(page, 2, 2).click();
+  await page.locator('#cell-null').check();
+  await page.locator('#cell-set').click();
+  assert.equal(await cell(page, 2, 2).textContent(), 'NULL');
+  await cell(page, 3, 0).click();
+  await page.locator('#cell-delete').click();
+  assert.match(await page.locator('#grid tbody tr').nth(3).getAttribute('class'), /deleted/);
+  await page.locator('#addrow').click();
+  await dbl(page, 0, 1);
+  await page.locator('#grid td input').fill('new');
+  await page.locator('#grid td input').press('Enter');
+  assert.equal(await text(page, '#changes-count'), '4 changes');
+
+  await page.locator('#commit').click();
+  await page.locator('#confirm[open]').waitFor();
+  assert.equal(await text(page, '#confirm-text'), 'Apply 4 changes to users?');
+  assert.equal(await text(page, '#confirm-sql'), 'INSERT ...;\nUPDATE ...;\nUPDATE ...;\nDELETE ...;');
+  await page.locator('#confirm-run').click();
+  await page.locator('#changes').waitFor({ state: 'hidden' });
+  const calls = await page.evaluate(() => window.calls);
+  const apply = calls.filter((c) => c.action === 'apply').at(-1);
+  assert.equal(apply.confirm, true);
+  assert.deepStrictEqual(apply.changes, [
+    { type: 'insert', values: { note: 'new' } },
+    { type: 'update', key: { id: '2' }, set: { note: 'x' } },
+    { type: 'update', key: { id: '3' }, set: { meta: null } },
+    { type: 'delete', key: { id: '4' } },
+  ]);
+  assert.equal(calls.at(-1).action, 'rows');
+});
+
+test('a failed commit keeps the edits and says why', async () => {
+  const { page } = await open(() => (window.applyFails = true));
+  await openUsers(page);
+  await dbl(page, 1, 1);
+  await page.locator('#grid td input').fill('x');
+  await page.locator('#grid td input').press('Enter');
+  await page.locator('#commit').click();
+  await page.locator('#confirm-run').click();
+  await page.locator('#changes-error:not(:empty)').waitFor();
+  assert.equal(await text(page, '#changes-error'), "Duplicate entry '2' for key 'PRIMARY'");
+  assert.equal(await text(page, '#changes-count'), '1 change');
+});
+
+test('a view or a table without a primary key is read only', async () => {
+  const { page } = await open();
+  await page.locator('#tables button', { hasText: 'audit.events' }).click();
+  await page.locator('#grid table').waitFor();
+  await page.locator('#grid[aria-busy]').waitFor({ state: 'detached' });
+  assert.equal(await page.locator('#addrow').isVisible(), false);
+  assert.equal(await page.locator('#readonly').isVisible(), true);
+  await dbl(page, 1, 1);
+  assert.equal(await page.locator('#grid td input').count(), 0);
+  await cell(page, 1, 1).click();
+  assert.equal(await page.locator('#cell-edit').isVisible(), false);
+});
+
+test('moving away from unsaved edits asks first', async () => {
+  const { page } = await open();
+  await openUsers(page);
+  await dbl(page, 1, 1);
+  await page.locator('#grid td input').fill('x');
+  await page.locator('#grid td input').press('Enter');
+
+  await page.locator('#next').click();
+  await page.locator('#confirm[open]').waitFor();
+  assert.equal(await text(page, '#confirm-text'), 'Discard 1 unsaved change?');
+  await page.locator('#confirm-cancel').click();
+  assert.equal(await text(page, '#range'), '1-100 of 230');
+  assert.equal(await text(page, '#changes-count'), '1 change');
+
+  await page.locator('#next').click();
+  await page.locator('#confirm-run').click();
+  await page.locator('#range', { hasText: '101-200' }).waitFor();
+  assert.equal(await page.locator('#changes').isVisible(), false);
 });
