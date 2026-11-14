@@ -49,6 +49,13 @@ window.lerd = {
         columns: [{ name: 'id', type: 'bigint', nullable: false, default: null, key: true }, { name: 'note', type: 'text', nullable: true, default: "'x'", key: false }],
         indexes: [{ name: 'users_pkey', definition: 'UNIQUE (id)' }], foreignKeys: [] });
     }
+    if (req.action === 'history') return JSON.stringify({ history: ['SELECT * FROM orders', 'SELECT 1'] });
+    if (req.action === 'query') {
+      if (/;\\s*\\S/.test(req.sql)) throw new Error('run one statement at a time\\n\\nexit status 1');
+      if (/^UPDATE/i.test(req.sql) && !req.confirm) return JSON.stringify({ connection: current, confirm: 'This statement can change shop. Run it?', sql: req.sql });
+      if (/^UPDATE/i.test(req.sql)) return JSON.stringify({ connection: current, read: false, affected: 2, columns: [], rows: [], ms: 5, truncated: false, cap: 1000 });
+      return JSON.stringify({ connection: current, read: true, columns: ['id', 'name'], rows: [['1', 'ana'], ['2', null]], ms: 12, truncated: !!window.truncated, cap: 1000 });
+    }
     throw new Error('unknown action ' + req.action);
   },
 };`;
@@ -318,4 +325,93 @@ test('clicking a cell shows its whole value, JSON laid out, and closes', async (
 
   await page.locator('#cell-close').click();
   assert.equal(await page.locator('#cell').isVisible(), false);
+});
+
+async function openQuery(page) {
+  await page.locator('#tables button').first().waitFor();
+  await page.locator('#sqlbtn').click();
+  await page.locator('#sql').waitFor();
+}
+const queries = (page) => page.evaluate(() => window.calls.filter((c) => c.action === 'query'));
+
+test('the SQL editor runs a query with Ctrl+Enter and shows it as a table', async () => {
+  const { page, errors } = await open();
+  await openQuery(page);
+  assert.equal(await text(page, '#title'), 'SQL query');
+  assert.equal(await page.locator('#views').isVisible(), false);
+  await page.locator('#sql').fill('SELECT id, name FROM users');
+  await page.locator('#sql').press('Control+Enter');
+  await page.locator('#qresult table').waitFor();
+  assert.deepStrictEqual(await page.locator('#qresult th').allTextContents(), ['id', 'name']);
+  assert.equal(await page.locator('#qresult tbody tr').nth(1).locator('td').nth(1).textContent(), 'NULL');
+  assert.equal(await text(page, '#qmeta'), '2 rows · 12 ms');
+  assert.deepStrictEqual(await queries(page), [{ action: 'query', sql: 'SELECT id, name FROM users', service: 'postgres', database: 'shop' }]);
+  assert.deepStrictEqual(errors, []);
+});
+
+test('a result switches between Table, JSON, Text and CSV', async () => {
+  const { page } = await open();
+  await openQuery(page);
+  await page.locator('#sql').fill('SELECT id, name FROM users');
+  await page.locator('#run').click();
+  await page.locator('#qresult table').waitFor();
+  await page.getByRole('tab', { name: 'JSON' }).click();
+  assert.equal(await text(page, '#qresult pre'), JSON.stringify([{ id: '1', name: 'ana' }, { id: '2', name: null }], null, 2));
+  await page.getByRole('tab', { name: 'Text' }).click();
+  assert.equal(await text(page, '#qresult pre'), '+----+------+\n| id | name |\n+----+------+\n| 1  | ana  |\n| 2  | NULL |\n+----+------+');
+  await page.getByRole('tab', { name: 'CSV' }).click();
+  assert.equal(await text(page, '#qresult pre'), 'id,name\r\n1,ana\r\n2,\r\n');
+  await page.getByRole('tab', { name: 'Table' }).click();
+  assert.equal(await page.locator('#qresult table').count(), 1);
+});
+
+test('a write asks first: Cancel sends nothing, Run sends it confirmed', async () => {
+  const { page } = await open();
+  await openQuery(page);
+  await page.locator('#sql').fill("UPDATE users SET name = 'x'");
+  await page.locator('#run').click();
+  await page.locator('#confirm[open]').waitFor();
+  assert.equal(await text(page, '#confirm-text'), 'This statement can change shop. Run it?');
+  assert.equal(await text(page, '#confirm-sql'), "UPDATE users SET name = 'x'");
+  await page.locator('#confirm-cancel').click();
+  await page.locator('#confirm[open]').waitFor({ state: 'detached' });
+  assert.equal((await queries(page)).length, 1);
+  assert.equal(await text(page, '#qmeta'), 'Not run.');
+
+  await page.locator('#run').click();
+  await page.locator('#confirm[open]').waitFor();
+  await page.locator('#confirm-run').click();
+  await page.locator('#qmeta', { hasText: 'changed' }).waitFor();
+  assert.equal(await text(page, '#qmeta'), '2 rows changed · 5 ms');
+  assert.equal((await queries(page)).at(-1).confirm, true);
+});
+
+test('an error shows in the result, and a cut result says so', async () => {
+  const { page } = await open(() => (window.truncated = true));
+  await openQuery(page);
+  await page.locator('#sql').fill('SELECT 1; SELECT 2');
+  await page.locator('#run').click();
+  await page.locator('#qresult .lerd-empty', { hasText: 'one statement' }).waitFor();
+  assert.equal(await text(page, '#qresult .lerd-empty'), 'run one statement at a time');
+
+  await page.locator('#sql').fill('SELECT id, name FROM users');
+  await page.locator('#run').click();
+  await page.locator('#qresult table').waitFor();
+  assert.equal(await text(page, '#qmeta'), 'First 1000 rows shown, add a LIMIT to choose · 12 ms');
+});
+
+test('history puts an earlier query back in the editor', async () => {
+  const { page } = await open();
+  await openQuery(page);
+  await page.locator('#history option', { hasText: 'SELECT * FROM orders' }).waitFor({ state: 'attached' });
+  await page.locator('#history').selectOption({ label: 'SELECT * FROM orders' });
+  assert.equal(await page.locator('#sql').inputValue(), 'SELECT * FROM orders');
+});
+
+test('picking a table leaves the editor for that table\'s data', async () => {
+  const { page } = await open();
+  await openQuery(page);
+  await openUsers(page);
+  assert.equal(await page.locator('#query').isVisible(), false);
+  assert.equal(await text(page, '#title'), 'users');
 });

@@ -6,12 +6,19 @@
 // "page_size", size} remembers how many rows a page shows; {action:
 // "structure", table, schema} answers a table's columns, indexes and keys.
 // rows also takes sort {column, dir} and filter {column, op, value}.
+// {action: "query", sql, confirm?} runs one statement: a read at once, capped
+// at CAP rows; a write only with confirm, answering {confirm} until then.
+// {action: "history"} lists the site's last queries.
 const fs = require('node:fs');
-const { withEngine, databaseName, tables, page, structure } = require('../lib/db');
+const { withEngine, databaseName, tables, page, structure, query } = require('../lib/db');
 const { OPERATORS } = require('../lib/sql');
 const { connectionsFor, pickConnection } = require('../lib/connections');
 const { PAGE_SIZES, readSettings, savePageSize, saveConnection } = require('../lib/settings');
 const { api } = require('../lib/lerd');
+const { singleStatement, isRead, capRows } = require('../lib/statement');
+const { readHistory, addHistory } = require('../lib/history');
+
+const CAP = 1000;
 
 const DATA = process.env.LERD_PLUGIN_DATA;
 
@@ -36,13 +43,29 @@ async function connect(body) {
   return { conn: withEngine({ sitePath, ...conn }), list, notice };
 }
 
+function runQuery(conn, connection, sql, confirmed) {
+  const statement = singleStatement(sql);
+  const read = isRead(statement);
+  if (!read && !confirmed) {
+    return { connection, confirm: `This statement can change ${databaseName(conn) ?? 'the database'}. Run it?`, sql: statement };
+  }
+  const started = Date.now();
+  const result = query(conn, read ? capRows(statement, CAP) : statement, { write: !read });
+  const ms = Date.now() - started;
+  addHistory(DATA, process.env.LERD_SITE, statement);
+  const truncated = result.rows.length > CAP;
+  if (truncated) result.rows.length = CAP;
+  return { engine: conn.engine, connection, read, ms, truncated, cap: CAP, ...result };
+}
+
 async function main() {
   const body = readBody();
   if (body.action === 'page_size') {
     savePageSize(DATA, Number(body.size));
     return { pageSize: readSettings(DATA).pageSize };
   }
-  if (!['tables', 'rows', 'structure'].includes(body.action)) throw new Error(`unknown action ${body.action}`);
+  if (body.action === 'history') return { history: readHistory(DATA, process.env.LERD_SITE) };
+  if (!['tables', 'rows', 'structure', 'query'].includes(body.action)) throw new Error(`unknown action ${body.action}`);
   const { conn, list, notice } = await connect(body);
   const connection = { service: conn.service, database: conn.database, engine: conn.engine };
   if (body.action === 'tables') {
@@ -52,6 +75,7 @@ async function main() {
       pageSize: readSettings(DATA).pageSize, pageSizes: PAGE_SIZES, operators: OPERATORS,
     };
   }
+  if (body.action === 'query') return runQuery(conn, connection, String(body.sql ?? ''), body.confirm === true);
   const table = tables(conn).find((t) => t.name === body.table && t.schema === (body.schema || ''));
   if (!table) throw new Error(`no table ${body.table} in this database`);
   if (body.action === 'structure') return { engine: conn.engine, connection, ...structure(conn, table) };

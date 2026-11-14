@@ -5,12 +5,16 @@ const $ = (id) => document.getElementById(id);
 const ENGINES = { mysql: 'MySQL / MariaDB', postgres: 'PostgreSQL', sqlite: 'SQLite' };
 const state = {
   tables: [], table: null, offset: 0, pageSize: 100, connection: null, connections: [],
-  view: 'data', sort: null, filter: null, operators: [],
+  view: 'data', sort: null, filter: null, operators: [], format: 'table', result: null,
 };
 
+// lerd ends a failed endpoint's message with the process's exit status, which
+// says nothing to the person reading it.
 function call(body) {
   const site = encodeURIComponent(lerd.context.site);
-  return lerd.api('db?site=' + site, { method: 'POST', body: JSON.stringify(body) }).then(JSON.parse);
+  return lerd.api('db?site=' + site, { method: 'POST', body: JSON.stringify(body) }).then(JSON.parse, (e) => {
+    throw new Error(e.message.replace(/\s*exit status \d+\s*$/, ''));
+  });
 }
 
 function el(tag, props = {}, ...children) {
@@ -33,7 +37,7 @@ function drawTables() {
   for (const t of shown) {
     const b = el('button', { type: 'button', title: label(t) }, el('span', { className: 'n lerd-mono', textContent: label(t) }));
     if (t.view) b.append(el('span', { className: 'lerd-pill', textContent: 'view' }));
-    if (t === state.table) b.setAttribute('aria-current', 'true');
+    if (t === state.table && state.view !== 'query') b.setAttribute('aria-current', 'true');
     b.onclick = () => openTable(t);
     list.append(b);
   }
@@ -45,11 +49,23 @@ function nextSort(column) {
   return state.sort.dir === 'asc' ? { column, dir: 'desc' } : null;
 }
 
+// Rows as a table whose cells open in the side panel; head draws each header.
+function resultTable(columns, rows, head = (c) => el('th', { textContent: c })) {
+  const body = rows.map((r) => el('tr', {}, ...r.map((v, i) => {
+    const td = v === null
+      ? el('td', { className: 'null lerd-muted', textContent: 'NULL' })
+      : el('td', { textContent: v, title: v.length > 40 ? v : '' });
+    td.onclick = () => showCell(columns[i], v);
+    return td;
+  })));
+  return el('table', {}, el('thead', {}, el('tr', {}, ...columns.map(head))), el('tbody', {}, ...body));
+}
+
 function drawGrid({ columns, rows }) {
   const grid = $('grid');
   grid.replaceChildren();
   if (!columns.length) return grid.append(note('No columns.'));
-  const head = el('tr', {}, ...columns.map((c) => {
+  const head = (c) => {
     const sorted = state.sort?.column === c ? state.sort.dir : '';
     const th = el('th', { textContent: c + (sorted ? (sorted === 'asc' ? ' ▲' : ' ▼') : ''), title: 'Sort by ' + c });
     if (sorted) th.setAttribute('aria-sort', sorted === 'asc' ? 'ascending' : 'descending');
@@ -58,15 +74,8 @@ function drawGrid({ columns, rows }) {
       loadRows(0);
     };
     return th;
-  }));
-  const body = rows.map((r) => el('tr', {}, ...r.map((v, i) => {
-    const td = v === null
-      ? el('td', { className: 'null lerd-muted', textContent: 'NULL' })
-      : el('td', { textContent: v, title: v.length > 40 ? v : '' });
-    td.onclick = () => showCell(columns[i], v);
-    return td;
-  })));
-  grid.append(el('table', {}, el('thead', {}, head), el('tbody', {}, ...body)));
+  };
+  grid.append(resultTable(columns, rows, head));
   if (!rows.length) grid.append(note(state.filter ? 'No rows match the filter.' : 'No rows.'));
 }
 
@@ -158,21 +167,32 @@ async function loadStructure() {
   }
 }
 
+// data and structure show the open table; query shows the SQL editor.
 function showView(view) {
   state.view = view;
   for (const b of $('views').querySelectorAll('[role="tab"]')) b.setAttribute('aria-selected', String(b.dataset.view === view));
   const data = view === 'data';
-  $('grid').hidden = $('filterbar').hidden = $('pager').hidden = !data;
-  $('range').hidden = !data;
-  $('structure').hidden = data;
+  const query = view === 'query';
+  $('grid').hidden = $('filterbar').hidden = $('pager').hidden = $('range').hidden = !data;
+  $('structure').hidden = view !== 'structure';
+  $('query').hidden = !query;
+  $('views').hidden = query || !state.table;
   $('cell').hidden = true;
+  drawTables();
   if (data) loadRows(state.offset);
-  else loadStructure();
+  else if (view === 'structure') loadStructure();
+  else {
+    $('title').textContent = 'SQL query';
+    loadHistory();
+    $('sql').focus();
+  }
 }
 for (const b of $('views').querySelectorAll('[role="tab"]')) b.onclick = () => showView(b.dataset.view);
 
-// A table opens unsorted and unfiltered, in whichever view was last open.
+// A table opens unsorted and unfiltered, in whichever of its views was last
+// open, or its data when coming from the SQL editor.
 function openTable(t) {
+  if (state.view === 'query') state.view = 'data';
   if (t !== state.table) {
     state.sort = state.filter = null;
     $('fval').value = '';
@@ -182,9 +202,7 @@ function openTable(t) {
   }
   state.table = t;
   state.offset = 0;
-  drawTables();
   $('title').textContent = label(t);
-  $('views').hidden = false;
   showView(state.view);
 }
 
@@ -218,6 +236,102 @@ $('size').onchange = async () => {
   }
 };
 
+// The SQL editor. The server says whether a statement writes; a write comes
+// back as a question, asked here in a dialog, and is sent again confirmed.
+const plural = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+
+function ask(text, sql) {
+  return new Promise((resolve) => {
+    const d = $('confirm');
+    $('confirm-text').textContent = text;
+    $('confirm-sql').textContent = sql;
+    const done = (yes) => {
+      if (d.open) d.close();
+      resolve(yes);
+    };
+    $('confirm-run').onclick = () => done(true);
+    $('confirm-cancel').onclick = () => done(false);
+    d.oncancel = () => done(false);
+    d.showModal();
+  });
+}
+
+function formatted() {
+  const { columns, rows } = state.result;
+  return { json: dbFormat.toJson, text: dbFormat.toText, csv: dbFormat.toCsv, table: dbFormat.toCsv }[state.format](columns, rows);
+}
+
+function drawResult() {
+  const box = $('qresult');
+  const r = state.result;
+  if (!r) return;
+  if (!r.columns.length) return box.replaceChildren(note(r.read ? 'No rows.' : 'Done.'));
+  box.replaceChildren(state.format === 'table' ? resultTable(r.columns, r.rows) : el('pre', { className: 'lerd-mono', textContent: formatted() }));
+}
+
+function queryMeta(r) {
+  const time = ` · ${r.ms} ms`;
+  if (!r.read) return (r.affected == null ? 'Done' : `${plural(r.affected, 'row')} changed`) + time;
+  if (r.truncated) return `First ${r.cap} rows shown, add a LIMIT to choose` + time;
+  return plural(r.rows.length, 'row') + time;
+}
+
+async function runQuery(confirm = false) {
+  const sql = $('sql').value;
+  const { service, database } = state.connection;
+  $('qmeta').textContent = '';
+  $('run').disabled = true;
+  $('qresult').replaceChildren(loading('Running...'));
+  try {
+    const r = await call({ action: 'query', sql, service, database, ...confirm && { confirm: true } });
+    if (r.confirm) {
+      $('run').disabled = false;
+      if (await ask(r.confirm, r.sql)) return runQuery(true);
+      $('qresult').replaceChildren();
+      $('qmeta').textContent = 'Not run.';
+      return;
+    }
+    state.result = r;
+    drawResult();
+    $('qmeta').textContent = queryMeta(r);
+    loadHistory();
+  } catch (e) {
+    state.result = null;
+    $('qresult').replaceChildren(note(e.message, ''));
+  } finally {
+    $('run').disabled = false;
+  }
+}
+
+async function loadHistory() {
+  try {
+    const { history } = await call({ action: 'history' });
+    $('history').replaceChildren(el('option', { value: '', textContent: 'History' }),
+      ...history.map((q) => el('option', { value: q, textContent: q.length > 80 ? q.slice(0, 80) + '…' : q })));
+  } catch {}
+}
+
+$('sqlbtn').onclick = () => showView('query');
+$('run').onclick = () => runQuery();
+$('sql').onkeydown = (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    runQuery();
+  }
+};
+$('history').onchange = () => {
+  if ($('history').value) $('sql').value = $('history').value;
+  $('history').value = '';
+};
+for (const b of $('formats').querySelectorAll('[role="tab"]')) {
+  b.onclick = () => {
+    state.format = b.dataset.format;
+    for (const o of $('formats').querySelectorAll('[role="tab"]')) o.setAttribute('aria-selected', String(o === b));
+    drawResult();
+  };
+}
+$('qcopy').onclick = () => state.result && navigator.clipboard?.writeText(formatted()).catch(() => {});
+
 const connLabel = (c, name) => `${c.database || name} · ${c.service || 'site'}`;
 
 // The site's databases: a picker when it has more than one, its name otherwise.
@@ -241,7 +355,11 @@ async function start(pick) {
   state.tables = [];
   state.sort = state.filter = null;
   $('title').textContent = $('range').textContent = '';
-  $('views').hidden = $('filterbar').hidden = $('structure').hidden = $('cell').hidden = true;
+  $('views').hidden = $('filterbar').hidden = $('structure').hidden = $('cell').hidden = $('query').hidden = true;
+  state.view = state.view === 'query' ? 'data' : state.view;
+  state.result = null;
+  $('qresult').replaceChildren();
+  $('qmeta').textContent = '';
   $('grid').hidden = false;
   setPaging(false);
   $('grid').replaceChildren();
@@ -257,7 +375,7 @@ async function start(pick) {
     $('fop').replaceChildren(...state.operators.map((op) => el('option', { value: op, textContent: op })));
     $('engine').textContent = ENGINES[res.engine] || res.engine;
     $('engine').hidden = false;
-    $('filter').disabled = false;
+    $('filter').disabled = $('sqlbtn').disabled = false;
     $('grid').replaceChildren(note('Pick a table.'));
     drawTables();
   } catch (e) {

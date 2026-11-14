@@ -1,3 +1,4 @@
 node_modules/
 test/fixtures/data/
 test/fixtures/api-data/
+test/fixtures/history-data/

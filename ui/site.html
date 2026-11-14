@@ -31,6 +31,14 @@
     .grid th { cursor: pointer; user-select: none; white-space: nowrap; }
     .grid td { cursor: pointer; }
     .structure { flex: 1; min-width: 0; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 16px; }
+    .query { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .query textarea { margin: 12px 12px 0; resize: vertical; min-height: 80px; }
+    .qbar { gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--lerd-line); }
+    .qbar #qmeta { flex: 1; min-width: 0; }
+    .qbar .lerd-tabs { margin: 0; }
+    .qresult th { cursor: default; }
+    .qresult pre { margin: 0; padding: 12px; white-space: pre; }
+    #confirm pre { white-space: pre-wrap; max-height: 200px; overflow: auto; }
     .cell { flex: 0 0 340px; min-width: 0; display: flex; flex-direction: column; border-left: 1px solid var(--lerd-line); }
     .cell .lerd-toolbar { border-bottom: 1px solid var(--lerd-line); }
     .cell pre { flex: 1; margin: 0; padding: 12px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
@@ -55,6 +63,7 @@
         <select id="conn" aria-label="Database" hidden></select>
         <span id="dbname" class="lerd-mono" hidden></span>
         <span id="notice" class="lerd-pill warn" hidden></span>
+        <button type="button" id="sqlbtn" disabled>SQL query</button>
         <input id="filter" type="search" placeholder="Filter tables" aria-label="Filter tables" disabled>
       </div>
       <div id="tables" class="tables"></div>
@@ -85,6 +94,22 @@
       <div class="content">
         <div id="grid" class="grid"></div>
         <div id="structure" class="structure" hidden></div>
+        <div id="query" class="query" hidden>
+          <textarea id="sql" class="lerd-mono" spellcheck="false" rows="7" placeholder="SELECT * FROM ..." aria-label="SQL"></textarea>
+          <div class="lerd-toolbar qbar">
+            <button type="button" id="run" class="primary" title="Ctrl+Enter">Run</button>
+            <select id="history" aria-label="History"><option value="">History</option></select>
+            <span id="qmeta" class="lerd-muted"></span>
+            <div id="formats" class="lerd-tabs" role="tablist">
+              <button type="button" role="tab" data-format="table" aria-selected="true">Table</button>
+              <button type="button" role="tab" data-format="json" aria-selected="false">JSON</button>
+              <button type="button" role="tab" data-format="text" aria-selected="false">Text</button>
+              <button type="button" role="tab" data-format="csv" aria-selected="false">CSV</button>
+            </div>
+            <button type="button" id="qcopy">Copy</button>
+          </div>
+          <div id="qresult" class="grid qresult"></div>
+        </div>
         <aside id="cell" class="cell" hidden>
           <div class="lerd-toolbar">
             <span id="cell-name" class="title lerd-mono"></span>
@@ -96,7 +121,16 @@
       </div>
     </div>
   </div>
+  <dialog id="confirm">
+    <p id="confirm-text"></p>
+    <pre id="confirm-sql" class="lerd-mono"></pre>
+    <div class="lerd-toolbar">
+      <button type="button" id="confirm-cancel">Cancel</button>
+      <button type="button" id="confirm-run" class="primary">Run</button>
+    </div>
+  </dialog>
   <script src="lerd.js"></script>
+  <script src="format.js"></script>
   <script src="site.js"></script>
 </body>
 </html>

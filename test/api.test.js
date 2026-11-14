@@ -177,3 +177,48 @@ test('tables lists the filter operators the UI may offer', async () => {
   const { json } = await call({ action: 'tables' });
   assert.deepStrictEqual(json.operators, ['=', '!=', '<', '>', '<=', '>=', 'contains', 'starts with', 'is null', 'is not null']);
 });
+
+const logged = () => (fs.existsSync(LOG) ? fs.readFileSync(LOG, 'utf8') : '');
+
+test('a read runs at once, says how long it took, and goes into the site\'s history', async () => {
+  const { json } = await call({ action: 'query', sql: 'SELECT n FROM numbers LIMIT 3;' });
+  assert.deepStrictEqual(json.columns, ['n']);
+  assert.deepStrictEqual(json.rows, [['1'], ['2'], ['3']]);
+  assert.equal(json.read, true);
+  assert.equal(json.truncated, false);
+  assert.equal(typeof json.ms, 'number');
+  assert.deepStrictEqual((await call({ action: 'history' })).json.history, ['SELECT n FROM numbers LIMIT 3']);
+});
+
+test('a read with no LIMIT of its own stops at 1000 rows and says it was cut', async () => {
+  const { json } = await call({ action: 'query', sql: 'SELECT n FROM numbers' });
+  assert.equal(json.rows.length, 1000);
+  assert.equal(json.truncated, true);
+  assert.equal(json.cap, 1000);
+  assert.match(logged(), /SELECT n FROM numbers LIMIT 1001/);
+});
+
+test('a write is not run until confirmed, then reports the rows it changed', async () => {
+  const ask = await call({ action: 'query', sql: "UPDATE users SET name = 'x'" });
+  assert.equal(ask.json.confirm, 'This statement can change shop. Run it?');
+  assert.equal(ask.json.rows, undefined);
+  assert.doesNotMatch(logged(), /UPDATE/);
+  assert.deepStrictEqual((await call({ action: 'history' })).json.history, []);
+
+  const done = await call({ action: 'query', sql: "UPDATE users SET name = 'x'", confirm: true });
+  assert.equal(done.json.read, false);
+  assert.equal(done.json.affected, 2);
+  assert.deepStrictEqual((await call({ action: 'history' })).json.history, ["UPDATE users SET name = 'x'"]);
+});
+
+test('a write on PostgreSQL reads its row count from the command tag', async () => {
+  const { json } = await call({ action: 'query', sql: "UPDATE posts SET title = 'x'", confirm: true, service: 'postgres', database: 'blog' });
+  assert.equal(json.affected, 1);
+  assert.deepStrictEqual(json.rows, []);
+});
+
+test('two statements, or nothing to run, are refused before anything runs', async () => {
+  assert.match((await call({ action: 'query', sql: 'SELECT 1; DROP TABLE users' })).error, /run one statement at a time/);
+  assert.match((await call({ action: 'query', sql: '  -- nothing' })).error, /nothing to run/);
+  assert.doesNotMatch(logged(), /DROP/);
+});

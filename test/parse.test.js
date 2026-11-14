@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { parseMysql, parseCsv, quoteIdent, sqliteFile, parseEnv } = require('../lib/parse');
+const { parseMysql, parseCsv, quoteIdent, sqliteFile, parseEnv, splitCommandTag, splitRowCount } = require('../lib/parse');
 
 test('parseMysql reads the header and unescapes batch values', () => {
   const out = 'a\tb\tc\n1\tNULL\tx\\ty\\nz\\\\w\n';
@@ -37,4 +37,17 @@ test('sqliteFile finds the file from DB_DATABASE, DATABASE_URL, or the default',
 test('parseEnv reads quoted values, skips comments, and drops inline comments', () => {
   const text = '# a comment\nDB_CONNECTION="sqlite"\nDB_DATABASE=\'db/app.sqlite\'\nAPP_NAME=shop # the name\nEMPTY=\n  SPACED = yes \n';
   assert.deepStrictEqual(parseEnv(text), { DB_CONNECTION: 'sqlite', DB_DATABASE: 'db/app.sqlite', APP_NAME: 'shop', EMPTY: '', SPACED: 'yes' });
+});
+
+test('splitCommandTag takes psql\'s closing tag off a write and reads the row count from it', () => {
+  assert.deepStrictEqual(splitCommandTag('UPDATE 2\n'), { body: '', affected: 2 });
+  assert.deepStrictEqual(splitCommandTag('id,n\n1,x\nINSERT 0 2\n'), { body: 'id,n\n1,x\n', affected: 2 });
+  assert.deepStrictEqual(splitCommandTag('CREATE TABLE\n'), { body: '', affected: null });
+  assert.deepStrictEqual(splitCommandTag(''), { body: '', affected: null });
+});
+
+test('splitRowCount takes the ROW_COUNT() the plugin appended off the end of mysql\'s output', () => {
+  assert.deepStrictEqual(splitRowCount('ROW_COUNT()\n3\n'), { body: '', affected: 3 });
+  assert.deepStrictEqual(splitRowCount('id\tn\n1\tx\nROW_COUNT()\n1\n'), { body: 'id\tn\n1\tx\n', affected: 1 });
+  assert.deepStrictEqual(splitRowCount('ROW_COUNT()\n-1\n'), { body: '', affected: null });
 });

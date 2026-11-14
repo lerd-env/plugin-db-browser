@@ -4,6 +4,8 @@ Adds a **Database** tab to every site that has a database (on lerd 1.38 the tab 
 
 Click a column header to sort by it, again for the other direction, and a third time to go back to the table's own order, which is its primary key so pages never shift. The filter bar under the toolbar narrows the rows on one column: equal, not equal, the comparisons, contains, starts with, or whether it is null. Click any cell to see its whole value in a side panel, with JSON laid out and a Copy button. **Structure** next to **Data** lists the table's columns with their types, nullability, defaults and primary key, its indexes and its foreign keys.
 
+**SQL query** above the table list opens an editor for the open database. Type one statement and press Run or Ctrl+Enter. A read runs straight away and shows up to 1000 rows, as a table, JSON, aligned text or CSV, each with a Copy button; add your own LIMIT to choose which rows. A statement that can change the database, such as an INSERT, UPDATE, DELETE or anything that alters a table, asks before it runs and then says how many rows it changed. The editor keeps the site's last 50 queries under History.
+
 When a site points at more than one database, such as a second connection string in its `.env`, the picker above the table list switches between them, and the tab remembers your pick for that site. It only ever offers the site's own databases, never another site's on the same server.
 
 It works with MySQL, MariaDB and PostgreSQL through `lerd db:shell`, including external servers added with `lerd db:use`, and SQLite through PHP in the site's container.
@@ -12,6 +14,7 @@ The tab only works from the dashboard on this machine, not from another device o
 
 ## Known limits
 
+- The editor runs one statement at a time; put each on its own run.
 - MySQL and MariaDB print a null and the text `NULL` the same way, so both show as NULL.
 - Opening the tab starts the site's database service if it was stopped.
 - The tab shows the databases of the site's main folder, not of a worktree with its own database.
