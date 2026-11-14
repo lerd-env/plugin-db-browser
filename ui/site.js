@@ -9,13 +9,20 @@ const state = {
   page: null, edits: dbEdits.createEdits(), cellAt: null,
 };
 
-// lerd ends a failed endpoint's message with the process's exit status, which
-// says nothing to the person reading it.
+// A refusal answers {error}; a crash comes back rejected, its message ending
+// with the process's exit status, which says nothing to the person reading it.
 function call(body) {
   const site = encodeURIComponent(lerd.context.site);
-  return lerd.api('db?site=' + site, { method: 'POST', body: JSON.stringify(body) }).then(JSON.parse, (e) => {
-    throw new Error(e.message.replace(/\s*exit status \d+\s*$/, ''));
-  });
+  return lerd.api('db?site=' + site, { method: 'POST', body: JSON.stringify(body) }).then(
+    (text) => {
+      const res = JSON.parse(text);
+      if (res.error) throw new Error(res.error);
+      return res;
+    },
+    (e) => {
+      throw new Error(e.message.replace(/\s*exit status \d+\s*$/, ''));
+    },
+  );
 }
 
 function el(tag, props = {}, ...children) {

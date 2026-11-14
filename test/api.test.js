@@ -57,7 +57,10 @@ function call(body, env = {}) {
     let err = '';
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (err += d));
-    child.on('close', (status) => resolve({ status, json: status === 0 ? JSON.parse(out) : null, error: err.trim() }));
+    child.on('close', (status) => {
+      const json = status === 0 ? JSON.parse(out) : null;
+      resolve({ status, json: json?.error ? null : json, error: json?.error ?? err.trim() });
+    });
     child.stdin.end(JSON.stringify(body));
   });
 }
@@ -87,7 +90,7 @@ test('picking another of the site\'s databases opens it and is remembered', asyn
 
 test('a database that is not the site\'s is refused before anything runs', async () => {
   const r = await call({ action: 'tables', service: 'mysql', database: 'other_site' });
-  assert.equal(r.status, 1);
+  assert.equal(r.status, 0);
   assert.match(r.error, /mysql \/ other_site is not one of this site's databases/);
   assert.equal(fs.existsSync(LOG), false);
 });
@@ -128,7 +131,7 @@ test('a negative or junk offset reads from the start', async () => {
 
 test('a table that is not in the list never reaches the SQL', async () => {
   const r = await call({ action: 'rows', table: 'users`; DROP TABLE users; --' });
-  assert.equal(r.status, 1);
+  assert.equal(r.status, 0);
   assert.match(r.error, /no table users`; DROP TABLE users; -- in this database/);
 });
 
@@ -242,7 +245,7 @@ test('confirmed edits run in one transaction', async () => {
 
 test('the database\'s refusal comes back as the error', async () => {
   const r = await call({ action: 'apply', table: 'users', changes: [{ type: 'insert', values: { id: 'FAIL_ME' } }], confirm: true });
-  assert.equal(r.status, 1);
+  assert.equal(r.status, 0);
   assert.match(r.error, /Duplicate entry 'FAIL_ME'/);
 });
 
@@ -278,4 +281,14 @@ test('accented text reads back as it is stored, and every MySQL session says it 
   const sessions = logged().split(/^db:shell.*$/m).slice(1).map((s) => s.trimStart());
   assert.ok(sessions.length >= 5);
   for (const s of sessions) assert.match(s, /^SET NAMES utf8mb4;/);
+});
+
+// lerd records every non-zero exit as the plugin failing, so a request the
+// plugin refuses, or SQL the database rejects, answers normally with an error.
+test('a refused request answers with its reason, not as a plugin failure', async () => {
+  for (const body of [{ action: 'rows', table: 'nope' }, { action: 'query', sql: 'SELECT 1; SELECT 2' }, { action: 'explode' }, { action: 'query', sql: 'SELECT nonsense FROM nowhere' }]) {
+    const r = await call(body);
+    assert.equal(r.status, 0, JSON.stringify(body));
+    assert.ok(r.error, JSON.stringify(body));
+  }
 });

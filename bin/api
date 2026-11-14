@@ -108,10 +108,16 @@ async function main() {
   return { engine: conn.engine, connection, offset, limit, ...page(conn, table, columns, { limit, offset, sort: body.sort, filter: body.filter }) };
 }
 
+// lerd records a non-zero exit as the plugin failing, so a refusal or an error
+// from the database answers {error} instead; only a fault in this code exits.
+const FAULTS = [TypeError, ReferenceError, SyntaxError, RangeError];
 main().then(
   (out) => process.stdout.write(JSON.stringify(out)),
   (e) => {
-    console.error(e.message);
-    process.exit(1);
+    if (FAULTS.some((F) => e instanceof F)) {
+      console.error(e.stack || e.message);
+      process.exit(1);
+    }
+    process.stdout.write(JSON.stringify({ error: e.message }));
   },
 );

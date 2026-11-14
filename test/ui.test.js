@@ -39,6 +39,7 @@ window.lerd = {
     if (req.action === 'page_size') { pageSize = req.size; return JSON.stringify({ pageSize }); }
     if (req.action === 'rows') {
       await waitForRelease();
+      if (window.refuse) return JSON.stringify({ error: window.refuse });
       const total = req.filter ? 5 : TOTAL;
       const n = Math.min(pageSize, total - req.offset);
       const rows = Array.from({ length: n }, (_, i) => [String(req.offset + i + 1), i === 0 ? null : '<img src=x onerror="window.pwned=1">', '{"a":1,"b":[2,3]}']);
@@ -613,4 +614,12 @@ test('paging sits in a status bar under the rows, and the engine beside the data
   await page.getByRole('tab', { name: 'Structure' }).click();
   await page.locator('#structure table').first().waitFor();
   assert.equal(await page.locator('#footer').isVisible(), false);
+});
+
+test('a refusal the endpoint answers with shows its reason', async () => {
+  const { page } = await open(() => (window.refuse = 'no column ghost in users'));
+  await page.locator('#tables button', { hasText: 'users' }).click();
+  await page.locator('#grid .lerd-empty').waitFor();
+  assert.equal(await text(page, '#grid .lerd-empty'), 'no column ghost in users');
+  assert.equal(await page.locator('#grid table').count(), 0);
 });
