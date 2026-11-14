@@ -3,9 +3,12 @@
 // {action: "tables", service?, database?} opens one of the site's databases,
 // remembering the pick, and lists its tables; {action: "rows", table, schema,
 // offset, service?, database?} answers one page of a table; {action:
-// "page_size", size} remembers how many rows a page shows.
+// "page_size", size} remembers how many rows a page shows; {action:
+// "structure", table, schema} answers a table's columns, indexes and keys.
+// rows also takes sort {column, dir} and filter {column, op, value}.
 const fs = require('node:fs');
-const { withEngine, databaseName, tables, page } = require('../lib/db');
+const { withEngine, databaseName, tables, page, structure } = require('../lib/db');
+const { OPERATORS } = require('../lib/sql');
 const { connectionsFor, pickConnection } = require('../lib/connections');
 const { PAGE_SIZES, readSettings, savePageSize, saveConnection } = require('../lib/settings');
 const { api } = require('../lib/lerd');
@@ -39,21 +42,22 @@ async function main() {
     savePageSize(DATA, Number(body.size));
     return { pageSize: readSettings(DATA).pageSize };
   }
-  if (body.action !== 'tables' && body.action !== 'rows') throw new Error(`unknown action ${body.action}`);
+  if (!['tables', 'rows', 'structure'].includes(body.action)) throw new Error(`unknown action ${body.action}`);
   const { conn, list, notice } = await connect(body);
   const connection = { service: conn.service, database: conn.database, engine: conn.engine };
   if (body.action === 'tables') {
     return {
       engine: conn.engine, connection, connections: list, notice,
       database: databaseName(conn), tables: tables(conn),
-      pageSize: readSettings(DATA).pageSize, pageSizes: PAGE_SIZES,
+      pageSize: readSettings(DATA).pageSize, pageSizes: PAGE_SIZES, operators: OPERATORS,
     };
   }
   const table = tables(conn).find((t) => t.name === body.table && t.schema === (body.schema || ''));
   if (!table) throw new Error(`no table ${body.table} in this database`);
+  if (body.action === 'structure') return { engine: conn.engine, connection, ...structure(conn, table) };
   const limit = readSettings(DATA).pageSize;
   const offset = Math.max(0, Number.parseInt(body.offset, 10) || 0);
-  return { engine: conn.engine, connection, offset, limit, ...page(conn, table, { limit, offset }) };
+  return { engine: conn.engine, connection, offset, limit, ...page(conn, table, { limit, offset, sort: body.sort, filter: body.filter }) };
 }
 
 main().then(

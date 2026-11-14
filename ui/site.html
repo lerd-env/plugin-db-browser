@@ -7,6 +7,7 @@
     /* Layout only: lerd draws the buttons, inputs, cards and table. The tab's
        frame fills the panel, so the card takes the whole viewport. */
     html, body { height: 100%; }
+    [hidden] { display: none !important; }
     body { display: flex; flex-direction: column; box-sizing: border-box; margin: 0; padding: 0; }
     .browser { flex: 1; min-height: 0; display: flex; overflow: hidden; border: 0; border-radius: 0; }
     .side { flex: 0 0 240px; display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--lerd-line); }
@@ -22,7 +23,17 @@
     .main .title { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pager { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
     .pager input { width: 64px; }
-    .grid { flex: 1; min-height: 0; overflow: auto; position: relative; }
+    .main .lerd-tabs { margin: 0; }
+    .filterbar { gap: 8px; }
+    .filterbar input { flex: 1; min-width: 120px; }
+    .content { flex: 1; min-height: 0; display: flex; }
+    .grid { flex: 1; min-width: 0; min-height: 0; overflow: auto; position: relative; }
+    .grid th { cursor: pointer; user-select: none; white-space: nowrap; }
+    .grid td { cursor: pointer; }
+    .structure { flex: 1; min-width: 0; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 16px; }
+    .cell { flex: 0 0 340px; min-width: 0; display: flex; flex-direction: column; border-left: 1px solid var(--lerd-line); }
+    .cell .lerd-toolbar { border-bottom: 1px solid var(--lerd-line); }
+    .cell pre { flex: 1; margin: 0; padding: 12px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
     .grid table { width: max-content; min-width: 100%; }
     /* A sticky header needs the card's own fill, or the rows show through it. */
     .grid th { position: sticky; top: 0; z-index: 1; background: var(--lerd-card); box-shadow: inset 0 -1px 0 var(--lerd-line); }
@@ -51,14 +62,38 @@
     <div class="main">
       <div class="lerd-toolbar">
         <span id="title" class="title lerd-mono"></span>
+        <div id="views" class="lerd-tabs" role="tablist" hidden>
+          <button type="button" role="tab" data-view="data" aria-selected="true">Data</button>
+          <button type="button" role="tab" data-view="structure" aria-selected="false">Structure</button>
+        </div>
         <span id="engine" class="lerd-pill" hidden></span>
         <span id="range" class="lerd-muted"></span>
-        <label class="pager lerd-muted">Rows <select id="size" aria-label="Rows per page"></select></label>
-        <button id="prev" disabled>Previous</button>
-        <label class="pager lerd-muted">Page <input id="page" type="number" min="1" value="1" disabled aria-label="Page"> of <span id="pages">1</span></label>
-        <button id="next" disabled>Next</button>
+        <span id="pager" class="pager">
+          <label class="pager lerd-muted">Rows <select id="size" aria-label="Rows per page"></select></label>
+          <button id="prev" disabled>Previous</button>
+          <label class="pager lerd-muted">Page <input id="page" type="number" min="1" value="1" disabled aria-label="Page"> of <span id="pages">1</span></label>
+          <button id="next" disabled>Next</button>
+        </span>
       </div>
-      <div id="grid" class="grid"></div>
+      <form id="filterbar" class="lerd-toolbar filterbar" hidden>
+        <select id="fcol" aria-label="Filter column"></select>
+        <select id="fop" aria-label="Filter operator"></select>
+        <input id="fval" type="search" placeholder="Value" aria-label="Filter value">
+        <button type="submit" class="primary">Filter</button>
+        <button type="button" id="fclear">Clear</button>
+      </form>
+      <div class="content">
+        <div id="grid" class="grid"></div>
+        <div id="structure" class="structure" hidden></div>
+        <aside id="cell" class="cell" hidden>
+          <div class="lerd-toolbar">
+            <span id="cell-name" class="title lerd-mono"></span>
+            <button type="button" id="cell-copy">Copy</button>
+            <button type="button" id="cell-close" aria-label="Close">Close</button>
+          </div>
+          <pre id="cell-value" class="lerd-mono"></pre>
+        </aside>
+      </div>
     </div>
   </div>
   <script src="lerd.js"></script>

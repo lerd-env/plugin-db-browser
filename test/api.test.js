@@ -138,3 +138,42 @@ test('bad requests are refused by name', async () => {
   assert.match((await call({ action: 'tables' }, { LERD_SITE: 'legacy', FAKE_NO_DB: '1' })).error, /names no database/);
   assert.match((await call({ action: 'tables' }, { LERD_API_TOKEN: 'wrong' })).error, /lerd API \/api\/(sites|databases): 401/);
 });
+
+test('rows sorts by a column, and otherwise by the primary key it reports', async () => {
+  const byKey = await call({ action: 'rows', table: 'users' });
+  assert.deepStrictEqual(byKey.json.keys, ['id']);
+  assert.match(fs.readFileSync(LOG, 'utf8'), /db:shell/);
+  const desc = await call({ action: 'rows', table: 'users', sort: { column: 'id', dir: 'desc' } });
+  assert.deepStrictEqual(desc.json.rows.map((r) => r[0]), ['3', '2', '1']);
+});
+
+test('rows filters, counts what matches, and keeps the columns when nothing does', async () => {
+  const hit = await call({ action: 'rows', table: 'users', filter: { column: 'name', op: 'starts with', value: 'an' } });
+  assert.deepStrictEqual(hit.json.rows, [['1', 'ana']]);
+  assert.equal(hit.json.total, 1);
+  const none = await call({ action: 'rows', table: 'users', filter: { column: 'name', op: '=', value: 'nobody' } });
+  assert.deepStrictEqual(none.json.rows, []);
+  assert.deepStrictEqual(none.json.columns, ['id', 'name']);
+  assert.equal(none.json.total, 0);
+});
+
+test('a sort or filter on a column the table does not have is refused', async () => {
+  assert.match((await call({ action: 'rows', table: 'users', sort: { column: 'password', dir: 'asc' } })).error, /no column password in users/);
+  assert.match((await call({ action: 'rows', table: 'users', filter: { column: 'name', op: 'OR', value: '1' } })).error, /filter operator OR is not one of/);
+});
+
+test('structure answers columns, indexes and foreign keys', async () => {
+  const { json } = await call({ action: 'structure', table: 'posts', schema: 'public', service: 'postgres', database: 'blog' });
+  assert.deepStrictEqual(json.columns, [
+    { name: 'id', type: 'integer', nullable: false, default: '', key: true },
+    { name: 'title', type: 'text', nullable: true, default: '', key: false },
+  ]);
+  assert.deepStrictEqual(json.indexes, [{ name: 'posts_pkey', definition: 'CREATE UNIQUE INDEX posts_pkey ON public.posts USING btree (id)' }]);
+  assert.deepStrictEqual(json.foreignKeys, [{ name: 'posts_user_fk', definition: 'FOREIGN KEY (user_id) REFERENCES users(id)' }]);
+  assert.match((await call({ action: 'structure', table: 'nope' })).error, /no table nope/);
+});
+
+test('tables lists the filter operators the UI may offer', async () => {
+  const { json } = await call({ action: 'tables' });
+  assert.deepStrictEqual(json.operators, ['=', '!=', '<', '>', '<=', '>=', 'contains', 'starts with', 'is null', 'is not null']);
+});

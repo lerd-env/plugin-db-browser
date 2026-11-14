@@ -33,14 +33,21 @@ window.lerd = {
       const list = window.single ? CONNECTIONS.slice(0, 1) : CONNECTIONS;
       if (req.service) current = list.find((c) => c.service === req.service && c.database === req.database);
       return JSON.stringify({ engine: current.engine, connection: current, connections: list, database: current.database,
-        notice: window.notice, pageSize, pageSizes: [50, 100, 250], tables: TABLES[current.database] });
+        notice: window.notice, pageSize, pageSizes: [50, 100, 250], tables: TABLES[current.database],
+        operators: ['=', '!=', 'contains', 'is null', 'is not null'] });
     }
     if (req.action === 'page_size') { pageSize = req.size; return JSON.stringify({ pageSize }); }
     if (req.action === 'rows') {
       await waitForRelease();
-      const n = Math.min(pageSize, TOTAL - req.offset);
-      const rows = Array.from({ length: n }, (_, i) => [String(req.offset + i + 1), i === 0 ? null : '<img src=x onerror="window.pwned=1">']);
-      return JSON.stringify({ engine: current.engine, connection: current, offset: req.offset, limit: pageSize, total: TOTAL, columns: ['id', 'note'], rows });
+      const total = req.filter ? 5 : TOTAL;
+      const n = Math.min(pageSize, total - req.offset);
+      const rows = Array.from({ length: n }, (_, i) => [String(req.offset + i + 1), i === 0 ? null : '<img src=x onerror="window.pwned=1">', '{"a":1,"b":[2,3]}']);
+      return JSON.stringify({ engine: current.engine, connection: current, offset: req.offset, limit: pageSize, total, columns: ['id', 'note', 'meta'], keys: ['id'], rows });
+    }
+    if (req.action === 'structure') {
+      return JSON.stringify({ engine: current.engine, connection: current,
+        columns: [{ name: 'id', type: 'bigint', nullable: false, default: null, key: true }, { name: 'note', type: 'text', nullable: true, default: "'x'", key: false }],
+        indexes: [{ name: 'users_pkey', definition: 'UNIQUE (id)' }], foreignKeys: [] });
     }
     throw new Error('unknown action ' + req.action);
   },
@@ -103,7 +110,7 @@ test('shows a spinner while a table loads, then its first page', async () => {
   await page.evaluate(() => (window.hold = false));
   await page.locator('#grid table').waitFor();
   await page.locator('#grid[aria-busy]').waitFor({ state: 'detached' });
-  assert.deepStrictEqual(await page.locator('#grid th').allTextContents(), ['id', 'note']);
+  assert.deepStrictEqual(await page.locator('#grid th').allTextContents(), ['id', 'note', 'meta']);
   assert.equal(await page.locator('#grid tbody tr').count(), 100);
   assert.equal(await text(page, '#range'), '1-100 of 230');
   assert.equal(await page.locator('#page').inputValue(), '1');
@@ -207,4 +214,108 @@ test('says so when the remembered database is gone', async () => {
   const { page } = await open(() => (window.notice = "mysql / dropped is no longer one of this site's databases, showing postgres / shop"));
   await page.locator('#tables button').first().waitFor();
   assert.equal(await text(page, '#notice'), "mysql / dropped is no longer one of this site's databases, showing postgres / shop");
+});
+
+async function openUsers(page) {
+  await page.locator('#tables button', { hasText: 'users' }).click();
+  await page.locator('#grid table').waitFor();
+  await page.locator('#grid[aria-busy]').waitFor({ state: 'detached' });
+}
+const lastRows = (page) => page.evaluate(() => window.calls.filter((c) => c.action === 'rows').at(-1));
+
+test('clicking a column header sorts by it, then the other way, then not at all', async () => {
+  const { page, errors } = await open();
+  await openUsers(page);
+  await page.locator('#next').click();
+  await page.locator('#range', { hasText: '101-' }).waitFor();
+
+  await page.locator('#grid th', { hasText: 'note' }).click();
+  await page.locator('#grid th[aria-sort="ascending"]').waitFor();
+  assert.deepStrictEqual((await lastRows(page)).sort, { column: 'note', dir: 'asc' });
+  assert.equal((await lastRows(page)).offset, 0);
+  assert.equal(await page.locator('#grid th[aria-sort="ascending"]').textContent(), 'note ▲');
+
+  await page.locator('#grid th', { hasText: 'note' }).click();
+  await page.locator('#grid th[aria-sort="descending"]').waitFor();
+  assert.deepStrictEqual((await lastRows(page)).sort, { column: 'note', dir: 'desc' });
+
+  await page.locator('#grid th', { hasText: 'note' }).click();
+  await page.locator('#grid th[aria-sort]').waitFor({ state: 'detached' });
+  assert.equal((await lastRows(page)).sort, undefined);
+  assert.deepStrictEqual(errors, []);
+});
+
+test('the filter bar filters on one column, needs no value for the null checks, and clears', async () => {
+  const { page } = await open();
+  await openUsers(page);
+  assert.deepStrictEqual(await page.locator('#fcol option').allTextContents(), ['id', 'note', 'meta']);
+  assert.deepStrictEqual(await page.locator('#fop option').allTextContents(), ['=', '!=', 'contains', 'is null', 'is not null']);
+
+  await page.locator('#fcol').selectOption('note');
+  await page.locator('#fop').selectOption('contains');
+  await page.locator('#fval').fill('abc');
+  await page.locator('#fval').press('Enter');
+  await page.locator('#range', { hasText: 'of 5' }).waitFor();
+  assert.deepStrictEqual((await lastRows(page)).filter, { column: 'note', op: 'contains', value: 'abc' });
+
+  await page.locator('#fop').selectOption('is null');
+  assert.equal(await page.locator('#fval').isDisabled(), true);
+
+  await page.locator('#fclear').click();
+  await page.locator('#range', { hasText: 'of 230' }).waitFor();
+  assert.equal((await lastRows(page)).filter, undefined);
+  assert.equal(await page.locator('#fval').inputValue(), '');
+});
+
+test('opening another table starts it unsorted and unfiltered', async () => {
+  const { page } = await open();
+  await openUsers(page);
+  await page.locator('#grid th', { hasText: 'note' }).click();
+  await page.locator('#grid th[aria-sort]').waitFor();
+  await page.locator('#fval').fill('abc');
+  await page.locator('#fval').press('Enter');
+  await page.locator('#range', { hasText: 'of 5' }).waitFor();
+
+  await page.locator('#tables button', { hasText: 'orders' }).click();
+  await page.locator('#range', { hasText: 'of 230' }).waitFor();
+  const call = await lastRows(page);
+  assert.equal(call.table, 'orders');
+  assert.equal(call.sort, undefined);
+  assert.equal(call.filter, undefined);
+  assert.equal(await page.locator('#fval').inputValue(), '');
+});
+
+test('the Structure view lists columns, indexes and foreign keys', async () => {
+  const { page, errors } = await open();
+  await openUsers(page);
+  await page.getByRole('tab', { name: 'Structure' }).click();
+  await page.locator('#structure table').first().waitFor();
+  assert.equal(await page.locator('#filterbar').isVisible(), false);
+  const rows = await page.locator('#structure .columns tbody tr').evaluateAll((trs) => trs.map((tr) => [...tr.cells].map((c) => c.textContent)));
+  assert.deepStrictEqual(rows, [['id', 'bigint', 'no', 'NULL', 'primary'], ['note', 'text', 'yes', "'x'", '']]);
+  assert.deepStrictEqual(await page.locator('#structure .indexes td').allTextContents(), ['users_pkey', 'UNIQUE (id)']);
+  assert.equal(await page.locator('#structure .fks .lerd-empty').textContent(), 'None.');
+
+  await page.getByRole('tab', { name: 'Data' }).click();
+  await page.locator('#grid table').waitFor();
+  assert.equal(await page.locator('#structure').isVisible(), false);
+  assert.deepStrictEqual(errors, []);
+});
+
+test('clicking a cell shows its whole value, JSON laid out, and closes', async () => {
+  const { page } = await open();
+  await openUsers(page);
+  await page.locator('#grid tbody tr').nth(1).locator('td').nth(2).click();
+  assert.equal(await page.locator('#cell').isVisible(), true);
+  assert.equal(await text(page, '#cell-name'), 'meta');
+  assert.equal(await text(page, '#cell-value'), '{\n  "a": 1,\n  "b": [\n    2,\n    3\n  ]\n}');
+
+  await page.locator('#grid tbody tr').first().locator('td').nth(1).click();
+  assert.equal(await text(page, '#cell-value'), 'NULL');
+  await page.locator('#grid tbody tr').nth(1).locator('td').nth(1).click();
+  assert.equal(await text(page, '#cell-value'), '<img src=x onerror="window.pwned=1">');
+  assert.equal(await page.locator('#cell img').count(), 0);
+
+  await page.locator('#cell-close').click();
+  assert.equal(await page.locator('#cell').isVisible(), false);
 });
