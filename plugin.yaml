@@ -2,9 +2,10 @@ api_version: 1
 name: db-browser
 lerd: ">=1.38"
 version: 0.1.0
-description: Browse a site's database on its own tab, MySQL, MariaDB, PostgreSQL or SQLite
+description: Browse, query and edit a site's database on its own tab, MySQL, MariaDB, PostgreSQL or SQLite
 docs: DOCS.md
 icon: icon.svg
+screenshots: [docs/data.png, docs/query.png, docs/structure.png]
 
 api:
   - path: db

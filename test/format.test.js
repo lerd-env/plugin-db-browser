@@ -30,3 +30,14 @@ test('an empty result still shows its columns', () => {
   assert.equal(toCsv(['a'], []), 'a\r\n');
   assert.equal(toJson(['a'], []), '[]');
 });
+
+const { toInserts } = require('../ui/format');
+
+test('SQL INSERT quotes names and values the way each engine reads them', () => {
+  const t = { schema: '', name: 'users' };
+  assert.equal(toInserts('mysql', t, ['id', 'na`me'], [['1', "o'neil\\"], ['2', null]]),
+    "INSERT INTO `users` (`id`, `na``me`) VALUES ('1', 'o''neil\\\\');\nINSERT INTO `users` (`id`, `na``me`) VALUES ('2', NULL);");
+  assert.equal(toInserts('postgres', { schema: 'audit', name: 'ev"ents' }, ['id'], [['1']]), `INSERT INTO "audit"."ev""ents" ("id") VALUES ('1');`);
+  assert.equal(toInserts('sqlite', t, ['note'], [['back\\slash']]), `INSERT INTO "users" ("note") VALUES ('back\\slash');`);
+  assert.equal(toInserts('mysql', t, ['id'], []), '');
+});

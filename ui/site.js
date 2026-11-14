@@ -24,6 +24,25 @@ function el(tag, props = {}, ...children) {
   return node;
 }
 
+// The dashboard's frame blocks the Clipboard API, so the copy falls back to
+// selecting the text in a hidden field, which a click is still allowed to copy.
+// Asking the policy first keeps the blocked call out of the console.
+async function copyText(text) {
+  const policy = document.permissionsPolicy ?? document.featurePolicy;
+  try {
+    if (policy && !policy.allowsFeature('clipboard-write')) throw new Error('blocked');
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const field = el('textarea', { value: text, readOnly: true });
+    field.style.position = 'fixed';
+    field.style.opacity = '0';
+    document.body.append(field);
+    field.select();
+    document.execCommand('copy');
+    field.remove();
+  }
+}
+
 const note = (text, cls = 'lerd-muted') => el('div', { className: 'lerd-empty ' + cls, textContent: text });
 const loading = (text) => el('div', { className: 'loading lerd-muted' }, el('span', { className: 'spinner' }), text);
 const label = (t) => (t.schema && t.schema !== 'public' ? t.schema + '.' : '') + t.name;
@@ -145,6 +164,7 @@ function showCell(column, value, at) {
   $('cell-input').disabled = $('cell-set').disabled = !canEdit;
   $('cell-null').checked = value === null;
   $('cell-null').disabled = !canEdit;
+  $('cell-copyrow').hidden = !at || 'insert' in at;
   $('cell-delete').textContent = at && 'insert' in at ? 'Remove row' : state.edits.deletes.has(at?.row) ? 'Keep row' : 'Delete row';
   let shown = value ?? 'NULL';
   try {
@@ -205,7 +225,19 @@ $('commit').onclick = async () => {
     $('changes-error').textContent = e.message;
   }
 };
-$('cell-copy').onclick = () => navigator.clipboard?.writeText($('cell-value').textContent).catch(() => {});
+$('cell-copy').onclick = () => copyText($('cell-value').textContent);
+$('cell-copyrow').onclick = () => {
+  const { columns, rows } = state.page;
+  copyText(JSON.stringify(Object.fromEntries(columns.map((c, i) => [c, rows[state.cellAt.row][i]])), null, 2));
+};
+// The page as the database holds it, without edits staged on it.
+$('copyas').onchange = () => {
+  const { columns, rows } = state.page;
+  const as = $('copyas').value;
+  $('copyas').value = '';
+  if (as === 'sql') copyText(dbFormat.toInserts(state.connection.engine, state.table, columns, rows));
+  else if (as) copyText({ csv: dbFormat.toCsv, json: dbFormat.toJson }[as](columns, rows));
+};
 
 // The old page stays dimmed under the spinner, so paging does not jump.
 function showLoading(text) {
@@ -455,7 +487,7 @@ for (const b of $('formats').querySelectorAll('[role="tab"]')) {
     drawResult();
   };
 }
-$('qcopy').onclick = () => state.result && navigator.clipboard?.writeText(formatted()).catch(() => {});
+$('qcopy').onclick = () => state.result && copyText(formatted());
 
 const connLabel = (c, name) => `${c.database || name} · ${c.service || 'site'}`;
 

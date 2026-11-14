@@ -532,3 +532,49 @@ test('moving away from unsaved edits asks first', async () => {
   await page.locator('#range', { hasText: '101-200' }).waitFor();
   assert.equal(await page.locator('#changes').isVisible(), false);
 });
+
+// The dashboard's frame blocks the Clipboard API; copying must still work.
+const blockClipboard = () => {
+  Object.defineProperty(document, 'permissionsPolicy', { value: { allowsFeature: (f) => f !== 'clipboard-write' } });
+  navigator.clipboard.writeText = () => { window.clipboardApiUsed = true; return Promise.reject(new Error('blocked')); };
+  document.execCommand = (cmd) => { if (cmd === 'copy') window.copied = document.activeElement.value; return true; };
+};
+
+test('Copy works where the Clipboard API is blocked, for a cell and for a result', async () => {
+  const { page } = await open(blockClipboard);
+  await openUsers(page);
+  await page.locator('#grid tbody tr').nth(1).locator('td').nth(2).click();
+  await page.locator('#cell-copy').click();
+  assert.equal(await page.evaluate(() => window.copied), '{\n  "a": 1,\n  "b": [\n    2,\n    3\n  ]\n}');
+  assert.equal(await page.evaluate(() => window.clipboardApiUsed), undefined);
+
+  await page.locator('#sqlbtn').click();
+  await page.locator('#sql').fill('SELECT id, name FROM users');
+  await page.locator('#run').click();
+  await page.locator('#qresult table').waitFor();
+  await page.getByRole('tab', { name: 'JSON' }).click();
+  await page.locator('#qcopy').click();
+  assert.equal(await page.evaluate(() => window.copied), JSON.stringify([{ id: '1', name: 'ana' }, { id: '2', name: null }], null, 2));
+});
+
+test('Copy rows copies the page as CSV, JSON or SQL INSERT, and Copy row one row as JSON', async () => {
+  const { page } = await open(blockClipboard);
+  await page.locator('#tables button', { hasText: 'audit.events' }).click();
+  await page.locator('#grid table').waitFor();
+  await page.locator('#grid[aria-busy]').waitFor({ state: 'detached' });
+  await page.locator('#copyas').selectOption('sql');
+  const sql = await page.evaluate(() => window.copied);
+  assert.equal(sql.split('\n').length, 100);
+  assert.equal(sql.split('\n')[0], `INSERT INTO "audit"."events" ("id", "note", "meta") VALUES ('1', NULL, '{"a":1,"b":[2,3]}');`);
+  assert.equal(await page.locator('#copyas').inputValue(), '');
+
+  await page.locator('#copyas').selectOption('csv');
+  // A text field keeps only \n, so CSV copied through the fallback ends lines with it.
+  assert.equal((await page.evaluate(() => window.copied)).split(/\r?\n/)[0], 'id,note,meta');
+  await page.locator('#copyas').selectOption('json');
+  assert.deepStrictEqual(JSON.parse(await page.evaluate(() => window.copied))[0], { id: '1', note: null, meta: '{"a":1,"b":[2,3]}' });
+
+  await page.locator('#grid tbody tr').nth(1).locator('td').first().click();
+  await page.locator('#cell-copyrow').click();
+  assert.deepStrictEqual(JSON.parse(await page.evaluate(() => window.copied)), { id: '2', note: '<img src=x onerror="window.pwned=1">', meta: '{"a":1,"b":[2,3]}' });
+});

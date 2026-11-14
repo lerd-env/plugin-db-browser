@@ -101,6 +101,12 @@
         <input id="fval" type="search" placeholder="Value" aria-label="Filter value">
         <button type="submit" class="primary">Filter</button>
         <button type="button" id="fclear">Clear</button>
+        <select id="copyas" aria-label="Copy the rows on this page" title="Copies the rows on this page">
+          <option value="">Copy rows as</option>
+          <option value="csv">CSV</option>
+          <option value="json">JSON</option>
+          <option value="sql">SQL INSERT</option>
+        </select>
         <span id="readonly" class="lerd-pill" title="Only a table with a primary key can be edited here" hidden>read only</span>
         <button type="button" id="addrow" hidden>Add row</button>
       </form>
@@ -134,6 +140,7 @@
           <div class="lerd-toolbar">
             <span id="cell-name" class="title lerd-mono"></span>
             <button type="button" id="cell-copy">Copy</button>
+            <button type="button" id="cell-copyrow" hidden>Copy row</button>
             <button type="button" id="cell-close" aria-label="Close">Close</button>
           </div>
           <div class="cell-body">

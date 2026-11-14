@@ -20,5 +20,16 @@
     return [rule, line(columns), rule, ...cells.map(line), rule].join('\n');
   }
 
-  Object.assign(exports, { toJson, toCsv, toText });
+  // The same quoting lib/parse.js does on the server: backticks for MySQL,
+  // double quotes elsewhere, and MySQL also escaping the backslash.
+  const ident = (engine, n) => (engine === 'mysql' ? '`' + n.replaceAll('`', '``') + '`' : '"' + n.replaceAll('"', '""') + '"');
+  const literal = (engine, v) => (v === null ? 'NULL' : "'" + (engine === 'mysql' ? v.replaceAll('\\', '\\\\') : v).replaceAll("'", "''") + "'");
+
+  function toInserts(engine, table, columns, rows) {
+    const into = (table.schema ? ident(engine, table.schema) + '.' : '') + ident(engine, table.name);
+    const names = columns.map((c) => ident(engine, c)).join(', ');
+    return rows.map((r) => `INSERT INTO ${into} (${names}) VALUES (${r.map((v) => literal(engine, v)).join(', ')});`).join('\n');
+  }
+
+  Object.assign(exports, { toJson, toCsv, toText, toInserts });
 })(typeof module === 'object' ? module.exports : (window.dbFormat = {}));
