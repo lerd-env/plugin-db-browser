@@ -597,3 +597,20 @@ test('a cell of a long query result opens in a panel that stays on screen', asyn
   assert.ok(panel.y >= result.y + result.height - 1, 'the panel opens under the result');
   assert.ok(panel.y + panel.height <= viewport.height + 1, `the panel ends inside the frame (${Math.round(panel.y + panel.height)} > ${viewport.height})`);
 });
+
+test('paging sits in a status bar under the rows, and the engine beside the database name', async () => {
+  const { page } = await open();
+  await openUsers(page);
+  const grid = await page.locator('#grid').boundingBox();
+  const footer = await page.locator('#footer').boundingBox();
+  const viewport = page.viewportSize();
+  assert.ok(footer.y >= grid.y + grid.height - 1, 'the status bar is under the rows');
+  assert.ok(footer.y + footer.height <= viewport.height + 1, 'the status bar is on screen');
+  for (const id of ['#range', '#size', '#prev', '#page', '#next']) {
+    assert.equal(await page.locator(`#footer ${id}`).count(), 1, `${id} is in the status bar`);
+  }
+  assert.equal(await page.locator('.side #engine').count(), 1);
+  await page.getByRole('tab', { name: 'Structure' }).click();
+  await page.locator('#structure table').first().waitFor();
+  assert.equal(await page.locator('#footer').isVisible(), false);
+});

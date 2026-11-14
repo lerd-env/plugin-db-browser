@@ -323,7 +323,7 @@ function showView(view) {
   for (const b of $('views').querySelectorAll('[role="tab"]')) b.setAttribute('aria-selected', String(b.dataset.view === view));
   const data = view === 'data';
   const query = view === 'query';
-  $('grid').hidden = $('filterbar').hidden = $('pager').hidden = $('range').hidden = !data;
+  $('grid').hidden = $('filterbar').hidden = $('footer').hidden = !data;
   $('structure').hidden = view !== 'structure';
   $('query').hidden = !query;
   $('views').hidden = query || !state.table;

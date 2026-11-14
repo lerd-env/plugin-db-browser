@@ -21,6 +21,10 @@
     .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
     .main .lerd-toolbar { align-items: center; margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--lerd-line); }
     .main .title { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dbline { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .dbline select, .dbline #dbname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .footer { gap: 8px; margin: 0; padding: 8px 12px; border-top: 1px solid var(--lerd-line); }
+    .footer .spacer { flex: 1; }
     .pager { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
     .pager input { width: 64px; }
     .main .lerd-tabs { margin: 0; }
@@ -72,8 +76,11 @@
   <div class="lerd-card flush browser">
     <div class="side">
       <div class="search">
-        <select id="conn" aria-label="Database" hidden></select>
-        <span id="dbname" class="lerd-mono" hidden></span>
+        <div class="dbline">
+          <select id="conn" aria-label="Database" hidden></select>
+          <span id="dbname" class="lerd-mono" hidden></span>
+          <span id="engine" class="lerd-pill" hidden></span>
+        </div>
         <span id="notice" class="lerd-pill warn" hidden></span>
         <button type="button" id="sqlbtn" disabled>SQL query</button>
         <input id="filter" type="search" placeholder="Filter tables" aria-label="Filter tables" disabled>
@@ -87,14 +94,6 @@
           <button type="button" role="tab" data-view="data" aria-selected="true">Data</button>
           <button type="button" role="tab" data-view="structure" aria-selected="false">Structure</button>
         </div>
-        <span id="engine" class="lerd-pill" hidden></span>
-        <span id="range" class="lerd-muted"></span>
-        <span id="pager" class="pager">
-          <label class="pager lerd-muted">Rows <select id="size" aria-label="Rows per page"></select></label>
-          <button id="prev" disabled>Previous</button>
-          <label class="pager lerd-muted">Page <input id="page" type="number" min="1" value="1" disabled aria-label="Page"> of <span id="pages">1</span></label>
-          <button id="next" disabled>Next</button>
-        </span>
       </div>
       <form id="filterbar" class="lerd-toolbar filterbar" hidden>
         <select id="fcol" aria-label="Filter column"></select>
@@ -156,6 +155,14 @@
           </div>
           </div>
         </aside>
+      </div>
+      <div id="footer" class="lerd-toolbar footer" hidden>
+        <span id="range" class="lerd-muted"></span>
+        <span class="spacer"></span>
+        <label class="pager lerd-muted">Rows <select id="size" aria-label="Rows per page"></select></label>
+        <button id="prev" disabled>Previous</button>
+        <label class="pager lerd-muted">Page <input id="page" type="number" min="1" value="1" disabled aria-label="Page"> of <span id="pages">1</span></label>
+        <button id="next" disabled>Next</button>
       </div>
     </div>
   </div>
