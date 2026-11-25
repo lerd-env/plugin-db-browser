@@ -15,4 +15,4 @@ api:
     timeout: 2m
 
 ui:
-  site_tab: {title: Database, entry: ui/site.html, when: database}
+  site_tab: {title: Database, entry: ui/database.html, when: database}

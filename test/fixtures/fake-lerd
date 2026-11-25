@@ -3,7 +3,8 @@
 // mode, or psql's csv output for the postgres service. Databases: the site's
 // default and mysql/shop hold users, mariadb-app/legacy holds orders,
 // postgres/blog holds posts. FAKE_NO_DB=1 is a server with no database picked.
-// FAKE_LOG names a file each call's arguments and SQL are appended to.
+// FAKE_LOG names a file each call's arguments and SQL are appended to, and each
+// call's folder goes to the same name with .cwd.
 // A session of several statements, each followed by SELECT '<marker>' AS
 // <marker>, is answered statement by statement with the marker rows between.
 const fs = require('node:fs');
@@ -12,7 +13,10 @@ const flag = (name) => (args.find((a) => a.startsWith(`--${name}=`)) || '').spli
 const service = flag('service');
 const database = flag('database');
 const input = fs.readFileSync(0, 'utf8');
-if (process.env.FAKE_LOG) fs.appendFileSync(process.env.FAKE_LOG, args.join(' ') + '\n' + input + '\n');
+if (process.env.FAKE_LOG) {
+  fs.appendFileSync(process.env.FAKE_LOG, args.join(' ') + '\n' + input + '\n');
+  fs.appendFileSync(process.env.FAKE_LOG + '.cwd', process.cwd() + ' $ ' + args.join(' ') + '\n');
+}
 
 function fail(msg) {
   process.stderr.write(msg + '\n');

@@ -12,8 +12,9 @@ const state = {
 // A refusal answers {error}; a crash comes back rejected, its message ending
 // with the process's exit status, which says nothing to the person reading it.
 function call(body) {
-  const site = encodeURIComponent(lerd.context.site);
-  return lerd.api('db?site=' + site, { method: 'POST', body: JSON.stringify(body) }).then(
+  const { site, branch } = lerd.context;
+  const query = 'site=' + encodeURIComponent(site) + (branch ? '&branch=' + encodeURIComponent(branch) : '');
+  return lerd.api('db?' + query, { method: 'POST', body: JSON.stringify(body) }).then(
     (text) => {
       const res = JSON.parse(text);
       if (res.error) throw new Error(res.error);

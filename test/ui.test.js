@@ -13,6 +13,7 @@ const UI = path.join(__dirname, '..', 'ui');
 // window.hold is set, so a test can look at the loading state.
 const STUB = `
 window.calls = [];
+window.paths = [];
 window.hold = false;
 const TOTAL = 230;
 let pageSize = 100;
@@ -24,10 +25,11 @@ const TABLES = {
 let current = CONNECTIONS[0];
 const waitForRelease = () => new Promise((r) => { const t = setInterval(() => { if (!window.hold) { clearInterval(t); r(); } }, 10); });
 window.lerd = {
-  context: { site: 'shop', domain: 'shop.test', branch: '', lang: 'en' },
+  context: { site: 'shop', domain: 'shop.test', branch: window.branch || '', lang: 'en' },
   async api(p, { body } = {}) {
     const req = JSON.parse(body);
     window.calls.push(req);
+    window.paths.push(p);
     if (window.fail) throw new Error(window.fail);
     if (req.action === 'tables') {
       const list = window.single ? CONNECTIONS.slice(0, 1) : CONNECTIONS;
@@ -79,7 +81,7 @@ test.before(async () => {
     res.end(fs.readFileSync(file));
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
-  url = `http://127.0.0.1:${server.address().port}/site.html`;
+  url = `http://127.0.0.1:${server.address().port}/database.html`;
   browser = await chromium.launch();
 });
 
@@ -98,6 +100,16 @@ async function open(setup) {
 }
 
 const text = (page, sel) => page.locator(sel).textContent();
+
+test('a worktree tab sends its branch, and the site tab sends none', async () => {
+  for (const [setup, path] of [[undefined, 'db?site=shop'], ["window.branch = 'feat/x'", 'db?site=shop&branch=feat%2Fx']]) {
+    const { page } = await open(setup);
+    await page.locator('#tables button').first().click();
+    await page.locator('#grid table').waitFor();
+    assert.deepStrictEqual(await page.evaluate(() => [...new Set(window.paths)]), [path]);
+    await page.close();
+  }
+});
 
 test('lists the tables with their schema when it is not public, and filters them', async () => {
   const { page, errors } = await open();

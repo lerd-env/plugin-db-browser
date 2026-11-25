@@ -12,8 +12,13 @@ const TOKEN = 'test-token';
 
 // lerd's own API as the plugin sees it: shop points at two databases, solo at
 // one, and legacy is a lerd from before sites listed their databases.
+// shop has a worktree, which lerd lists without databases of its own.
+const WORKTREE = path.join(__dirname, 'fixtures');
 const SITES = [
-  { name: 'shop', has_database: true, databases: [{ service: 'mysql', database: 'shop' }, { service: 'postgres', database: 'blog' }] },
+  {
+    name: 'shop', has_database: true, databases: [{ service: 'mysql', database: 'shop' }, { service: 'postgres', database: 'blog' }],
+    worktrees: [{ branch: 'feat', path: WORKTREE }, { branch: 'own', path: WORKTREE, db_isolated: true, db_database: 'shop' }],
+  },
   { name: 'solo', has_database: true, databases: [{ service: 'mariadb-app', database: 'legacy' }] },
   { name: 'legacy' },
 ];
@@ -74,6 +79,43 @@ test('tables opens the site\'s first database and lists the others it may switch
   assert.deepStrictEqual(json.tables, [{ schema: '', name: 'users', view: false }, { schema: '', name: 'active_users', view: true }]);
   assert.equal(json.pageSize, 100);
   assert.deepStrictEqual(json.pageSizes, [50, 100, 250, 500, 1000]);
+});
+
+const inWorktree = { LERD_QUERY: 'site=shop&branch=feat' };
+
+test('a worktree opens the database its own folder points at, not the site\'s', async () => {
+  const { json, error } = await call({ action: 'tables' }, inWorktree);
+  assert.equal(error, '');
+  assert.deepStrictEqual(json.connections, [{ service: '', database: '', engine: '' }]);
+  await call({ action: 'query', sql: 'UPDATE users SET name = 1', confirm: true }, inWorktree);
+  const calls = fs.readFileSync(LOG + '.cwd', 'utf8').trim().split('\n');
+  assert.ok(calls.length > 1);
+  assert.deepStrictEqual([...new Set(calls)], [`${WORKTREE} $ db:shell`]);
+});
+
+test('a worktree with its own database names it, since a db block in .lerd.yaml still names the site\'s', async () => {
+  const { json, error } = await call({ action: 'tables' }, { LERD_QUERY: 'site=shop&branch=own' });
+  assert.equal(error, '');
+  assert.equal(json.database, 'shop');
+  const calls = fs.readFileSync(LOG + '.cwd', 'utf8').trim().split('\n');
+  assert.deepStrictEqual([...new Set(calls)], [`${WORKTREE} $ db:shell --database=shop`]);
+});
+
+test('a database picked on the main tab does not follow into a worktree', async () => {
+  await call({ action: 'tables', service: 'postgres', database: 'blog' });
+  const { json } = await call({ action: 'tables' }, inWorktree);
+  assert.equal(json.notice, undefined);
+  assert.equal(json.connection.service, '');
+  const again = await call({ action: 'tables' });
+  assert.equal(again.json.database, 'blog');
+});
+
+test('a worktree refuses the main folder\'s databases, and an unknown branch is refused', async () => {
+  const other = await call({ action: 'rows', table: 'users', service: 'mysql', database: 'shop' }, inWorktree);
+  assert.match(other.error, /mysql \/ shop is not one of this site's databases/);
+  const gone = await call({ action: 'tables' }, { LERD_QUERY: 'site=shop&branch=gone' });
+  assert.match(gone.error, /shop has no worktree gone/);
+  assert.ok(!fs.existsSync(LOG));
 });
 
 test('picking another of the site\'s databases opens it and is remembered', async () => {
