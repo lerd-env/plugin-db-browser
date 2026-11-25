@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// POST /api/plugins/db-browser/db?site=<site>
+// POST /api/plugins/db-browser/db?site=<site>[&branch=<worktree>]
 // {action: "tables", service?, database?} opens one of the site's databases,
 // remembering the pick, and lists its tables; {action: "rows", table, schema,
 // offset, service?, database?} answers one page of a table; {action:
@@ -40,6 +40,17 @@ async function serviceFamilies(site) {
   return all;
 }
 
+// The folder whose databases the tab shows: the site's own, or the worktree the
+// query names, since lerd always runs this for the main folder. An unknown
+// branch is refused, never answered from the main folder's database.
+function checkoutOf(site) {
+  const branch = new URLSearchParams(process.env.LERD_QUERY ?? '').get('branch');
+  if (!branch) return { ...site, path: process.env.LERD_SITE_PATH, key: site.name };
+  const worktree = (site.worktrees ?? []).find((w) => w.branch === branch);
+  if (!worktree) throw new Error(`${site.name} has no worktree ${branch}`);
+  return { ...worktree, key: `${site.name}@${branch}` };
+}
+
 // The connection a request may use: one of the site's own, checked against
 // what lerd lists rather than what the request says.
 async function connect(body) {
@@ -48,12 +59,12 @@ async function connect(body) {
   if (!siteName || !sitePath) throw new Error('pick a site: ?site=<name>');
   const site = (await api('/api/sites')).find((s) => s.name === siteName);
   if (!site) throw new Error(`lerd lists no site ${siteName}`);
-  const services = await serviceFamilies(site);
-  const list = connectionsFor(site, services);
+  const checkout = checkoutOf(site);
+  const list = connectionsFor(checkout, await serviceFamilies(checkout));
   const requested = body.service ? { service: String(body.service), database: String(body.database ?? '') } : null;
-  const { conn, notice } = pickConnection(list, requested, readSettings(DATA).connections[siteName]);
-  if (requested && body.action === 'tables') saveConnection(DATA, siteName, conn);
-  return { conn: withEngine({ sitePath, ...conn }), list, notice };
+  const { conn, notice } = pickConnection(list, requested, readSettings(DATA).connections[checkout.key]);
+  if (requested && body.action === 'tables') saveConnection(DATA, checkout.key, conn);
+  return { conn: withEngine({ sitePath: checkout.path, ...conn }), list, notice };
 }
 
 function runQuery(conn, connection, sql, confirmed) {

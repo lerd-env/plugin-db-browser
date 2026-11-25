@@ -10,7 +10,7 @@ Tables with a primary key can be edited. Double-click a cell to change it in pla
 
 **SQL query** above the table list opens an editor for the open database. Type one statement and press Run or Ctrl+Enter. A read runs straight away and shows up to 1000 rows, as a table, JSON, aligned text or CSV, each with a Copy button; add your own LIMIT to choose which rows. A statement that can change the database, such as an INSERT, UPDATE, DELETE or anything that alters a table, asks before it runs and then says how many rows it changed. The editor keeps the site's last 50 queries under History.
 
-When a site points at more than one database, such as a second connection string in its `.env`, the picker above the table list switches between them, and the tab remembers your pick for that site. It only ever offers the site's own databases, never another site's on the same server.
+When a site points at more than one database, such as a second connection string in its `.env`, the picker above the table list switches between them, and the tab remembers your pick for that site. On a worktree's tab it opens the worktree's database instead of the main folder's. It only ever offers the site's own databases, never another site's on the same server.
 
 It works with MySQL, MariaDB and PostgreSQL through `lerd db:shell`, including external servers added with `lerd db:use`, and SQLite through PHP in the site's container.
 
@@ -22,5 +22,5 @@ The tab only works from the dashboard on this machine, not from another device o
 - Copying covers the page on screen or a query result of up to 1000 rows. To export a whole database, use **Export** on lerd's Databases page or `lerd db:export`.
 - MySQL and MariaDB print a null and the text `NULL` the same way, so both show as NULL.
 - Opening the tab starts the site's database service if it was stopped.
-- The tab shows the databases of the site's main folder, not of a worktree with its own database.
+- A worktree's tab opens the one database its own folder points at, with no picker for a second one.
 - On a lerd older than 1.39 the picker is not there and the tab opens the database `lerd db:shell` picks.

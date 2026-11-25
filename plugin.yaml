@@ -1,7 +1,7 @@
 api_version: 1
 name: db-browser
 lerd: ">=1.38"
-version: 0.1.0
+version: 0.1.1
 description: Browse, query and edit a site's database on its own tab, MySQL, MariaDB, PostgreSQL or SQLite
 docs: DOCS.md
 icon: icon.svg
@@ -15,4 +15,4 @@ api:
     timeout: 2m
 
 ui:
-  site_tab: {title: Database, entry: ui/site.html, when: database}
+  site_tab: {title: Database, entry: ui/database.html, when: database}
